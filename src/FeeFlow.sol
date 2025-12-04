@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {AccessControl} from "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title FeeFlow
 /// @author ScopeLift
@@ -13,6 +14,8 @@ import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.so
 /// @dev In ZKsync's deployment, the bid token is ZK and the destination is a Splitter contract.
 /// @custom:security-contact security@matterlabs.dev
 contract FeeFlow is AccessControl {
+  using SafeERC20 for IERC20;
+
   /// @notice Role identifier for emergency admin who can pause the contract without governance
   /// delay.
   bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256("EMERGENCY_ADMIN_ROLE");
@@ -33,11 +36,28 @@ contract FeeFlow is AccessControl {
   /// @notice Emitted when the destination address is updated.
   event DestinationSet(address oldDestination, address newDestination);
 
+  /// @notice Emitted when fee tokens are claimed.
+  event Claimed(address indexed claimer, ClaimRequest[] claimRequests, uint256 bidAmount);
+
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error FeeFlow_InvalidAddress();
 
   /// @notice Thrown when caller lacks the required admin role for an operation.
   error FeeFlow_Unauthorized();
+
+  /// @notice Thrown when attempting to claim the bid token as a fee token.
+  error FeeFlow_InvalidFeeToken();
+
+  /// @notice Thrown when fee token balance is zero or below the minimum expected amount.
+  error FeeFlow_InsufficientBalance();
+
+  /// @notice Represents a fee token claim request with slippage protection.
+  /// @param token The fee token to claim.
+  /// @param minAmount The minimum expected balance (reverts if balance is lower).
+  struct ClaimRequest {
+    IERC20 token;
+    uint256 minAmountRequested;
+  }
 
   /// @param _admin The address that receives the DEFAULT_ADMIN_ROLE (governance).
   /// @param _emergencyAdmin The address that receives the EMERGENCY_ADMIN_ROLE (emergency board).
@@ -67,6 +87,27 @@ contract FeeFlow is AccessControl {
     if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
     emit DestinationSet(destination, _newDestination);
     destination = _newDestination;
+  }
+
+  /// @notice Claims accumulated fee tokens in exchange for bid tokens.
+  /// @dev The bid token cannot be claimed as a fee token.
+  /// @param _claimRequests Array of claim requests specifying tokens and minimum amounts.
+  function claim(ClaimRequest[] calldata _claimRequests) external {
+    uint256 _bidAmount = bidThreshold;
+
+    BID_TOKEN.safeTransferFrom(msg.sender, destination, _bidAmount);
+
+    for (uint256 _i = 0; _i < _claimRequests.length; _i++) {
+      IERC20 _token = _claimRequests[_i].token;
+      if (_token == BID_TOKEN) revert FeeFlow_InvalidFeeToken();
+      uint256 _balance = _token.balanceOf(address(this));
+      if (_balance == 0 || _balance < _claimRequests[_i].minAmountRequested) {
+        revert FeeFlow_InsufficientBalance();
+      }
+      _token.safeTransfer(msg.sender, _balance);
+    }
+
+    emit Claimed(msg.sender, _claimRequests, _bidAmount);
   }
 
   /// @dev Reverts if the caller does not have `DEFAULT_ADMIN_ROLE` or `EMERGENCY_ADMIN_ROLE`.
