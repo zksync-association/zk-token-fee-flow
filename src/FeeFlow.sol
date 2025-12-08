@@ -30,6 +30,9 @@ contract FeeFlow is AccessControl {
   /// @dev In ZKsync's deployment, this is a Splitter contract.
   address public destination;
 
+  /// @notice Whether claiming is currently paused.
+  bool public claimPaused;
+
   /// @notice Emitted when the bid threshold is updated.
   event BidThresholdSet(uint256 oldThreshold, uint256 newThreshold);
 
@@ -38,6 +41,9 @@ contract FeeFlow is AccessControl {
 
   /// @notice Emitted when fee tokens are claimed.
   event Claimed(address indexed claimer, ClaimRequest[] claimRequests, uint256 bidAmount);
+
+  /// @notice Emitted when claim pause state is changed.
+  event ClaimPausedSet(bool paused);
 
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error FeeFlow_InvalidAddress();
@@ -50,6 +56,9 @@ contract FeeFlow is AccessControl {
 
   /// @notice Thrown when fee token balance is zero or below the minimum expected amount.
   error FeeFlow_InsufficientBalance();
+
+  /// @notice Thrown when attempting to claim while paused.
+  error FeeFlow_ClaimPaused();
 
   /// @notice Represents a fee token claim request with slippage protection.
   /// @param token The fee token to claim.
@@ -89,10 +98,19 @@ contract FeeFlow is AccessControl {
     destination = _newDestination;
   }
 
+  /// @notice Sets the claim pause state.
+  /// @param _paused Whether claiming should be paused.
+  function setClaimPaused(bool _paused) external {
+    _revertIfNotAdmin();
+    claimPaused = _paused;
+    emit ClaimPausedSet(_paused);
+  }
+
   /// @notice Claims accumulated fee tokens in exchange for bid tokens.
   /// @dev The bid token cannot be claimed as a fee token.
   /// @param _claimRequests Array of claim requests specifying tokens and minimum amounts.
   function claim(ClaimRequest[] calldata _claimRequests) external {
+    if (claimPaused) revert FeeFlow_ClaimPaused();
     uint256 _bidAmount = bidThreshold;
 
     BID_TOKEN.safeTransferFrom(msg.sender, destination, _bidAmount);

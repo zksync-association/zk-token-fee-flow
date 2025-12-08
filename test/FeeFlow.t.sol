@@ -174,6 +174,48 @@ contract SetDestination is FeeFlowTest {
   }
 }
 
+contract SetClaimPaused is FeeFlowTest {
+  function testFuzz_SetsPausedState_WhenCalledByDefaultAdmin(bool _paused) public {
+    vm.prank(admin);
+    feeFlow.setClaimPaused(_paused);
+
+    assertEq(feeFlow.claimPaused(), _paused);
+  }
+
+  function testFuzz_SetsPausedState_WhenCalledByEmergencyAdmin(bool _paused) public {
+    vm.prank(emergencyAdmin);
+    feeFlow.setClaimPaused(_paused);
+
+    assertEq(feeFlow.claimPaused(), _paused);
+  }
+
+  function testFuzz_EmitsEvent_WhenPauseStateIsSet(bool _paused) public {
+    vm.expectEmit(address(feeFlow));
+    emit FeeFlow.ClaimPausedSet(_paused);
+
+    vm.prank(admin);
+    feeFlow.setClaimPaused(_paused);
+  }
+
+  function testFuzz_RevertWhen_CallerIsNotAdmin(address _caller, bool _paused) public {
+    _assumeNotAdmin(_caller);
+
+    vm.prank(_caller);
+    vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
+    feeFlow.setClaimPaused(_paused);
+  }
+
+  function testFuzz_SetsCorrectState_ForAllTransitions(bool _initialState, bool _newState) public {
+    vm.prank(admin);
+    feeFlow.setClaimPaused(_initialState);
+    assertEq(feeFlow.claimPaused(), _initialState);
+
+    vm.prank(admin);
+    feeFlow.setClaimPaused(_newState);
+    assertEq(feeFlow.claimPaused(), _newState);
+  }
+}
+
 contract Claim is FeeFlowTest {
   function testFuzz_TransfersBidTokenToDestination(address _claimer, uint256 _threshold) public {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
@@ -453,6 +495,17 @@ contract Claim is FeeFlowTest {
     // address(0) has no balance, so safeTransferFrom will revert
     vm.prank(address(0));
     vm.expectRevert();
+    feeFlow.claim(_claimRequests);
+  }
+
+  function testFuzz_RevertWhen_ClaimIsPaused(address _claimer) public {
+    vm.prank(admin);
+    feeFlow.setClaimPaused(true);
+
+    FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](0);
+
+    vm.prank(_claimer);
+    vm.expectRevert(FeeFlow.FeeFlow_ClaimPaused.selector);
     feeFlow.claim(_claimRequests);
   }
 }
