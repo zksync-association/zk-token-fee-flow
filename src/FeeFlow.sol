@@ -26,6 +26,9 @@ contract FeeFlow is AccessControl {
   /// @notice The amount of bid tokens required to claim accumulated fee assets.
   uint256 public bidThreshold;
 
+  /// @notice The minimum threshold that can be set for bid token claims.
+  uint256 public immutable MIN_BID_THRESHOLD;
+
   /// @notice The destination address where bid tokens are forwarded after claims.
   /// @dev In ZKsync's deployment, this is a Splitter contract.
   address public destination;
@@ -60,6 +63,9 @@ contract FeeFlow is AccessControl {
   /// @notice Thrown when attempting to claim while paused.
   error FeeFlow_ClaimPaused();
 
+  /// @notice Thrown when attempting to set bid threshold below minimum.
+  error FeeFlow_ThresholdBelowMin();
+
   /// @notice Represents a fee token claim request with slippage protection.
   /// @param token The fee token to claim.
   /// @param minAmount The minimum expected balance (reverts if balance is lower).
@@ -71,11 +77,21 @@ contract FeeFlow is AccessControl {
   /// @param _admin The address that receives the DEFAULT_ADMIN_ROLE (governance).
   /// @param _emergencyAdmin The address that receives the EMERGENCY_ADMIN_ROLE (emergency board).
   /// @param _bidToken The token contract used for auction payments.
-  constructor(address _admin, address _emergencyAdmin, IERC20 _bidToken) {
+  /// @param _minBidThreshold The minimum threshold that can be set for bid token claims.
+  /// @param _bidThreshold The initial bid threshold for claims.
+  constructor(
+    address _admin,
+    address _emergencyAdmin,
+    IERC20 _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold
+  ) {
     if (_admin == address(0)) revert FeeFlow_InvalidAddress();
     if (_emergencyAdmin == address(0)) revert FeeFlow_InvalidAddress();
 
     BID_TOKEN = _bidToken;
+    MIN_BID_THRESHOLD = _minBidThreshold;
+    _setBidThreshold(_bidThreshold);
 
     _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     _grantRole(EMERGENCY_ADMIN_ROLE, _emergencyAdmin);
@@ -85,8 +101,7 @@ contract FeeFlow is AccessControl {
   /// @param _newThreshold The new threshold amount.
   function setBidThreshold(uint256 _newThreshold) external {
     _revertIfNotAdmin();
-    emit BidThresholdSet(bidThreshold, _newThreshold);
-    bidThreshold = _newThreshold;
+    _setBidThreshold(_newThreshold);
   }
 
   /// @notice Sets the destination address where bid tokens are forwarded.
@@ -133,5 +148,13 @@ contract FeeFlow is AccessControl {
     if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender) && !hasRole(EMERGENCY_ADMIN_ROLE, msg.sender)) {
       revert FeeFlow_Unauthorized();
     }
+  }
+
+  /// @dev Internal helper to set bid threshold with validation and event emission.
+  /// @param _newThreshold The new threshold amount.
+  function _setBidThreshold(uint256 _newThreshold) internal {
+    if (_newThreshold < MIN_BID_THRESHOLD) revert FeeFlow_ThresholdBelowMin();
+    emit BidThresholdSet(bidThreshold, _newThreshold);
+    bidThreshold = _newThreshold;
   }
 }

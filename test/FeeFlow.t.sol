@@ -12,13 +12,17 @@ contract FeeFlowTest is Test {
   address internal emergencyAdmin;
   ERC20Mock internal bidToken;
   address internal destination;
+  uint256 internal minBidThreshold = 100;
+  uint256 internal initialBidThreshold = 1000;
 
   function setUp() public virtual {
     admin = makeAddr("admin");
     emergencyAdmin = makeAddr("emergencyAdmin");
     destination = makeAddr("destination");
     bidToken = new ERC20Mock();
-    feeFlow = new FeeFlow(admin, emergencyAdmin, IERC20(address(bidToken)));
+    feeFlow = new FeeFlow(
+      admin, emergencyAdmin, IERC20(address(bidToken)), minBidThreshold, initialBidThreshold
+    );
 
     vm.prank(admin);
     feeFlow.setDestination(destination);
@@ -38,8 +42,8 @@ contract FeeFlowTest is Test {
     bidToken.approve(address(feeFlow), _amount);
   }
 
-  function _boundThreshold(uint256 _threshold) internal pure returns (uint256) {
-    return bound(_threshold, 1, type(uint256).max);
+  function _boundThreshold(uint256 _threshold) internal view returns (uint256) {
+    return bound(_threshold, minBidThreshold, type(uint256).max);
   }
 
   function _boundFeeAmount(uint256 _feeAmount) internal pure returns (uint256) {
@@ -51,42 +55,93 @@ contract Constructor is FeeFlowTest {
   function testFuzz_Constructor_SetsRolesAndToken(
     address _admin,
     address _emergencyAdmin,
-    address _bidToken
+    address _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold
   ) public {
     _assumeNonZeroAddress(_admin);
     _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
-    feeFlow = new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken));
+    feeFlow =
+      new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
 
     assertEq(address(feeFlow.BID_TOKEN()), _bidToken);
+    assertEq(feeFlow.MIN_BID_THRESHOLD(), _minBidThreshold);
+    assertEq(feeFlow.bidThreshold(), _bidThreshold);
     assertTrue(feeFlow.hasRole(feeFlow.DEFAULT_ADMIN_ROLE(), _admin));
     assertTrue(feeFlow.hasRole(feeFlow.EMERGENCY_ADMIN_ROLE(), _emergencyAdmin));
   }
 
-  function testFuzz_RevertWhen_AdminIsZeroAddress(address _emergencyAdmin, address _bidToken)
-    public
-  {
+  function testFuzz_RevertWhen_AdminIsZeroAddress(
+    address _emergencyAdmin,
+    address _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold
+  ) public {
     _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(address(0), _emergencyAdmin, IERC20(_bidToken));
+    new FeeFlow(address(0), _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
   }
 
-  function testFuzz_RevertWhen_EmergencyAdminIsZeroAddress(address _admin, address _bidToken)
-    public
-  {
+  function testFuzz_RevertWhen_EmergencyAdminIsZeroAddress(
+    address _admin,
+    address _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold
+  ) public {
     _assumeNonZeroAddress(_admin);
     _assumeNonZeroAddress(_bidToken);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(_admin, address(0), IERC20(_bidToken));
+    new FeeFlow(_admin, address(0), IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+  }
+
+  function testFuzz_RevertWhen_BidThresholdBelowMin(
+    address _admin,
+    address _emergencyAdmin,
+    address _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold
+  ) public {
+    _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_emergencyAdmin);
+    _assumeNonZeroAddress(_bidToken);
+    _minBidThreshold = bound(_minBidThreshold, 1, type(uint256).max);
+    _bidThreshold = bound(_bidThreshold, 0, _minBidThreshold - 1);
+
+    vm.expectRevert(FeeFlow.FeeFlow_ThresholdBelowMin.selector);
+    new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+  }
+
+  function testFuzz_EmitsEvent_WhenBidThresholdIsSetInConstructor(
+    address _admin,
+    address _emergencyAdmin,
+    address _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold
+  ) public {
+    _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_emergencyAdmin);
+    _assumeNonZeroAddress(_bidToken);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
+
+    vm.expectEmit();
+    emit FeeFlow.BidThresholdSet(0, _bidThreshold);
+
+    new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
   }
 }
 
 contract SetBidThreshold is FeeFlowTest {
   function testFuzz_SetsThreshold_WhenCalledByDefaultAdmin(uint256 _newThreshold) public {
+    _newThreshold = _boundThreshold(_newThreshold);
+
     vm.prank(admin);
     feeFlow.setBidThreshold(_newThreshold);
 
@@ -94,6 +149,8 @@ contract SetBidThreshold is FeeFlowTest {
   }
 
   function testFuzz_SetsThreshold_WhenCalledByEmergencyAdmin(uint256 _newThreshold) public {
+    _newThreshold = _boundThreshold(_newThreshold);
+
     vm.prank(emergencyAdmin);
     feeFlow.setBidThreshold(_newThreshold);
 
@@ -103,6 +160,9 @@ contract SetBidThreshold is FeeFlowTest {
   function testFuzz_EmitsEvent_WhenThresholdIsSet(uint256 _oldThreshold, uint256 _newThreshold)
     public
   {
+    _oldThreshold = _boundThreshold(_oldThreshold);
+    _newThreshold = _boundThreshold(_newThreshold);
+
     vm.prank(admin);
     feeFlow.setBidThreshold(_oldThreshold);
 
@@ -115,10 +175,34 @@ contract SetBidThreshold is FeeFlowTest {
 
   function testFuzz_RevertWhen_CallerIsNotAdmin(address _caller, uint256 _newThreshold) public {
     _assumeNotAdmin(_caller);
+    _newThreshold = _boundThreshold(_newThreshold);
 
     vm.prank(_caller);
     vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
     feeFlow.setBidThreshold(_newThreshold);
+  }
+
+  function testFuzz_RevertWhen_ThresholdBelowMin(uint256 _newThreshold) public {
+    _newThreshold = bound(_newThreshold, 0, minBidThreshold - 1);
+
+    vm.prank(admin);
+    vm.expectRevert(FeeFlow.FeeFlow_ThresholdBelowMin.selector);
+    feeFlow.setBidThreshold(_newThreshold);
+  }
+
+  function testFuzz_RevertWhen_ThresholdBelowMin_EmergencyAdmin(uint256 _newThreshold) public {
+    _newThreshold = bound(_newThreshold, 0, minBidThreshold - 1);
+
+    vm.prank(emergencyAdmin);
+    vm.expectRevert(FeeFlow.FeeFlow_ThresholdBelowMin.selector);
+    feeFlow.setBidThreshold(_newThreshold);
+  }
+
+  function test_SucceedsWhen_ThresholdEqualsMin() public {
+    vm.prank(admin);
+    feeFlow.setBidThreshold(minBidThreshold);
+
+    assertEq(feeFlow.bidThreshold(), minBidThreshold);
   }
 }
 
