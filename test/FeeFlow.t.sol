@@ -21,11 +21,13 @@ contract FeeFlowTest is Test {
     destination = makeAddr("destination");
     bidToken = new ERC20Mock();
     feeFlow = new FeeFlow(
-      admin, emergencyAdmin, IERC20(address(bidToken)), minBidThreshold, initialBidThreshold
+      admin,
+      emergencyAdmin,
+      IERC20(address(bidToken)),
+      minBidThreshold,
+      initialBidThreshold,
+      destination
     );
-
-    vm.prank(admin);
-    feeFlow.setDestination(destination);
   }
 
   function _assumeNonZeroAddress(address _addr) internal pure {
@@ -52,24 +54,28 @@ contract FeeFlowTest is Test {
 }
 
 contract Constructor is FeeFlowTest {
-  function testFuzz_Constructor_SetsRolesAndToken(
+  function testFuzz_Constructor_SetsStateCorrectly(
     address _admin,
     address _emergencyAdmin,
     address _bidToken,
     uint256 _minBidThreshold,
-    uint256 _bidThreshold
+    uint256 _bidThreshold,
+    address _destination
   ) public {
     _assumeNonZeroAddress(_admin);
     _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
+    _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
-    feeFlow =
-      new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+    feeFlow = new FeeFlow(
+      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    );
 
     assertEq(address(feeFlow.BID_TOKEN()), _bidToken);
     assertEq(feeFlow.MIN_BID_THRESHOLD(), _minBidThreshold);
     assertEq(feeFlow.bidThreshold(), _bidThreshold);
+    assertEq(feeFlow.destination(), _destination);
     assertTrue(feeFlow.hasRole(feeFlow.DEFAULT_ADMIN_ROLE(), _admin));
     assertTrue(feeFlow.hasRole(feeFlow.EMERGENCY_ADMIN_ROLE(), _emergencyAdmin));
   }
@@ -78,28 +84,54 @@ contract Constructor is FeeFlowTest {
     address _emergencyAdmin,
     address _bidToken,
     uint256 _minBidThreshold,
-    uint256 _bidThreshold
+    uint256 _bidThreshold,
+    address _destination
   ) public {
     _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
+    _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(address(0), _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+    new FeeFlow(
+      address(0), _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    );
   }
 
   function testFuzz_RevertWhen_EmergencyAdminIsZeroAddress(
     address _admin,
     address _bidToken,
     uint256 _minBidThreshold,
+    uint256 _bidThreshold,
+    address _destination
+  ) public {
+    _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_bidToken);
+    _assumeNonZeroAddress(_destination);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
+
+    vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
+    new FeeFlow(
+      _admin, address(0), IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    );
+  }
+
+  function testFuzz_RevertWhen_DestinationIsZeroAddress(
+    address _admin,
+    address _emergencyAdmin,
+    address _bidToken,
+    uint256 _minBidThreshold,
     uint256 _bidThreshold
   ) public {
     _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(_admin, address(0), IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+    new FeeFlow(
+      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, address(0)
+    );
   }
 
   function testFuzz_RevertWhen_BidThresholdBelowMin(
@@ -107,16 +139,20 @@ contract Constructor is FeeFlowTest {
     address _emergencyAdmin,
     address _bidToken,
     uint256 _minBidThreshold,
-    uint256 _bidThreshold
+    uint256 _bidThreshold,
+    address _destination
   ) public {
     _assumeNonZeroAddress(_admin);
     _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
+    _assumeNonZeroAddress(_destination);
     _minBidThreshold = bound(_minBidThreshold, 1, type(uint256).max);
     _bidThreshold = bound(_bidThreshold, 0, _minBidThreshold - 1);
 
     vm.expectRevert(FeeFlow.FeeFlow_ThresholdBelowMin.selector);
-    new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+    new FeeFlow(
+      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    );
   }
 
   function testFuzz_EmitsEvent_WhenBidThresholdIsSetInConstructor(
@@ -124,17 +160,43 @@ contract Constructor is FeeFlowTest {
     address _emergencyAdmin,
     address _bidToken,
     uint256 _minBidThreshold,
-    uint256 _bidThreshold
+    uint256 _bidThreshold,
+    address _destination
   ) public {
     _assumeNonZeroAddress(_admin);
     _assumeNonZeroAddress(_emergencyAdmin);
     _assumeNonZeroAddress(_bidToken);
+    _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
     vm.expectEmit();
     emit FeeFlow.BidThresholdSet(0, _bidThreshold);
 
-    new FeeFlow(_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold);
+    new FeeFlow(
+      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    );
+  }
+
+  function testFuzz_EmitsEvent_WhenDestinationIsSetInConstructor(
+    address _admin,
+    address _emergencyAdmin,
+    address _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold,
+    address _destination
+  ) public {
+    _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_emergencyAdmin);
+    _assumeNonZeroAddress(_bidToken);
+    _assumeNonZeroAddress(_destination);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
+
+    vm.expectEmit();
+    emit FeeFlow.DestinationSet(address(0), _destination);
+
+    new FeeFlow(
+      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    );
   }
 }
 

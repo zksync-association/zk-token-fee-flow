@@ -79,12 +79,14 @@ contract FeeFlow is AccessControl {
   /// @param _bidToken The token contract used for auction payments.
   /// @param _minBidThreshold The minimum threshold that can be set for bid token claims.
   /// @param _bidThreshold The initial bid threshold for claims.
+  /// @param _destination The initial destination address where bid tokens are forwarded.
   constructor(
     address _admin,
     address _emergencyAdmin,
     IERC20 _bidToken,
     uint256 _minBidThreshold,
-    uint256 _bidThreshold
+    uint256 _bidThreshold,
+    address _destination
   ) {
     if (_admin == address(0)) revert FeeFlow_InvalidAddress();
     if (_emergencyAdmin == address(0)) revert FeeFlow_InvalidAddress();
@@ -92,6 +94,7 @@ contract FeeFlow is AccessControl {
     BID_TOKEN = _bidToken;
     MIN_BID_THRESHOLD = _minBidThreshold;
     _setBidThreshold(_bidThreshold);
+    _setDestination(_destination);
 
     _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     _grantRole(EMERGENCY_ADMIN_ROLE, _emergencyAdmin);
@@ -108,9 +111,7 @@ contract FeeFlow is AccessControl {
   /// @param _newDestination The new destination address.
   function setDestination(address _newDestination) external {
     _revertIfNotAdmin();
-    if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
-    emit DestinationSet(destination, _newDestination);
-    destination = _newDestination;
+    _setDestination(_newDestination);
   }
 
   /// @notice Sets the claim pause state.
@@ -156,5 +157,13 @@ contract FeeFlow is AccessControl {
     if (_newThreshold < MIN_BID_THRESHOLD) revert FeeFlow_ThresholdBelowMin();
     emit BidThresholdSet(bidThreshold, _newThreshold);
     bidThreshold = _newThreshold;
+  }
+
+  /// @dev Internal helper to set destination with validation and event emission.
+  /// @param _newDestination The new destination address.
+  function _setDestination(address _newDestination) internal {
+    if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
+    emit DestinationSet(destination, _newDestination);
+    destination = _newDestination;
   }
 }
