@@ -3,8 +3,12 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {FeeFlow} from "src/FeeFlow.sol";
+import {ERC1967Proxy} from "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {ERC20Mock} from "lib/openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
+import {
+  Initializable
+} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 
 contract FeeFlowTest is Test {
   FeeFlow internal feeFlow;
@@ -15,12 +19,31 @@ contract FeeFlowTest is Test {
   uint256 internal minBidThreshold = 100;
   uint256 internal initialBidThreshold = 1000;
 
+  function _deployFeeFlow(
+    address _admin,
+    address _emergencyAdmin,
+    IERC20 _bidToken,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold,
+    address _destination
+  ) internal returns (FeeFlow) {
+    FeeFlow _implementation = new FeeFlow();
+    ERC1967Proxy _proxy = new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        FeeFlow.initialize,
+        (_admin, _emergencyAdmin, _bidToken, _minBidThreshold, _bidThreshold, _destination)
+      )
+    );
+    return FeeFlow(address(_proxy));
+  }
+
   function setUp() public virtual {
     admin = makeAddr("admin");
     emergencyAdmin = makeAddr("emergencyAdmin");
     destination = makeAddr("destination");
     bidToken = new ERC20Mock();
-    feeFlow = new FeeFlow(
+    feeFlow = _deployFeeFlow(
       admin,
       emergencyAdmin,
       IERC20(address(bidToken)),
@@ -53,8 +76,14 @@ contract FeeFlowTest is Test {
   }
 }
 
-contract Constructor is FeeFlowTest {
-  function testFuzz_Constructor_SetsStateCorrectly(
+contract Initialize is FeeFlowTest {
+  function test_StorageLocationMatchesEIP7201() public view {
+    bytes32 _expected =
+      keccak256(abi.encode(uint256(keccak256("storage.FeeFlow")) - 1)) & ~bytes32(uint256(0xff));
+    assertEq(feeFlow.FEEFLOW_STORAGE_LOCATION(), _expected);
+  }
+
+  function testFuzz_Initialize_SetsStateCorrectly(
     address _admin,
     address _emergencyAdmin,
     address _bidToken,
@@ -68,12 +97,12 @@ contract Constructor is FeeFlowTest {
     _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
-    feeFlow = new FeeFlow(
+    feeFlow = _deployFeeFlow(
       _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
     );
 
-    assertEq(address(feeFlow.BID_TOKEN()), _bidToken);
-    assertEq(feeFlow.MIN_BID_THRESHOLD(), _minBidThreshold);
+    assertEq(address(feeFlow.bidToken()), _bidToken);
+    assertEq(feeFlow.minBidThreshold(), _minBidThreshold);
     assertEq(feeFlow.bidThreshold(), _bidThreshold);
     assertEq(feeFlow.destination(), _destination);
     assertTrue(feeFlow.hasRole(feeFlow.DEFAULT_ADMIN_ROLE(), _admin));
@@ -92,9 +121,21 @@ contract Constructor is FeeFlowTest {
     _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(
-      address(0), _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        FeeFlow.initialize,
+        (
+          address(0),
+          _emergencyAdmin,
+          IERC20(_bidToken),
+          _minBidThreshold,
+          _bidThreshold,
+          _destination
+        )
+      )
     );
   }
 
@@ -110,9 +151,14 @@ contract Constructor is FeeFlowTest {
     _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(
-      _admin, address(0), IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        FeeFlow.initialize,
+        (_admin, address(0), IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination)
+      )
     );
   }
 
@@ -128,9 +174,14 @@ contract Constructor is FeeFlowTest {
     _assumeNonZeroAddress(_bidToken);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
-    new FeeFlow(
-      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, address(0)
+    new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        FeeFlow.initialize,
+        (_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, address(0))
+      )
     );
   }
 
@@ -149,53 +200,56 @@ contract Constructor is FeeFlowTest {
     _minBidThreshold = bound(_minBidThreshold, 1, type(uint256).max);
     _bidThreshold = bound(_bidThreshold, 0, _minBidThreshold - 1);
 
+    FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_ThresholdBelowMin.selector);
-    new FeeFlow(
-      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        FeeFlow.initialize,
+        (_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination)
+      )
     );
   }
 
-  function testFuzz_EmitsEvent_WhenBidThresholdIsSetInConstructor(
-    address _admin,
-    address _emergencyAdmin,
-    address _bidToken,
-    uint256 _minBidThreshold,
-    uint256 _bidThreshold,
-    address _destination
-  ) public {
-    _assumeNonZeroAddress(_admin);
-    _assumeNonZeroAddress(_emergencyAdmin);
-    _assumeNonZeroAddress(_bidToken);
-    _assumeNonZeroAddress(_destination);
-    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
-
-    vm.expectEmit();
-    emit FeeFlow.BidThresholdSet(0, _bidThreshold);
-
-    new FeeFlow(
-      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+  function test_RevertWhen_InitializeCalledTwice() public {
+    vm.expectRevert();
+    feeFlow.initialize(
+      admin,
+      emergencyAdmin,
+      IERC20(address(bidToken)),
+      minBidThreshold,
+      initialBidThreshold,
+      destination
     );
   }
 
-  function testFuzz_EmitsEvent_WhenDestinationIsSetInConstructor(
-    address _admin,
-    address _emergencyAdmin,
-    address _bidToken,
-    uint256 _minBidThreshold,
-    uint256 _bidThreshold,
-    address _destination
-  ) public {
-    _assumeNonZeroAddress(_admin);
-    _assumeNonZeroAddress(_emergencyAdmin);
-    _assumeNonZeroAddress(_bidToken);
-    _assumeNonZeroAddress(_destination);
-    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
+  function test_RevertWhen_ImplementationInitialized() public {
+    FeeFlow _implementation = new FeeFlow();
+    vm.expectRevert();
+    _implementation.initialize(
+      admin,
+      emergencyAdmin,
+      IERC20(address(bidToken)),
+      minBidThreshold,
+      initialBidThreshold,
+      destination
+    );
+  }
 
-    vm.expectEmit();
-    emit FeeFlow.DestinationSet(address(0), _destination);
+  function test_ConstructorDisablesInitializers() public {
+    // Deploy a fresh implementation (not behind a proxy)
+    FeeFlow _implementation = new FeeFlow();
 
-    new FeeFlow(
-      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+    // The constructor calls _disableInitializers(), so any attempt to initialize should revert
+    // with InvalidInitialization error from Initializable contract
+    vm.expectRevert(Initializable.InvalidInitialization.selector);
+    _implementation.initialize(
+      admin,
+      emergencyAdmin,
+      IERC20(address(bidToken)),
+      minBidThreshold,
+      initialBidThreshold,
+      destination
     );
   }
 }
@@ -653,5 +707,56 @@ contract Claim is FeeFlowTest {
     vm.prank(_claimer);
     vm.expectRevert(FeeFlow.FeeFlow_ClaimPaused.selector);
     feeFlow.claim(_claimRequests);
+  }
+}
+
+contract Upgrade is FeeFlowTest {
+  function test_UpgradeSucceeds_WhenCalledByAdmin() public {
+    FeeFlow _newImplementation = new FeeFlow();
+
+    vm.prank(admin);
+    feeFlow.upgradeToAndCall(address(_newImplementation), "");
+  }
+
+  function testFuzz_StoragePreserved_AfterUpgrade(uint256 _threshold, address _newDestination)
+    public
+  {
+    vm.assume(_newDestination != address(0));
+    _threshold = _boundThreshold(_threshold);
+
+    vm.prank(admin);
+    feeFlow.setBidThreshold(_threshold);
+
+    vm.prank(admin);
+    feeFlow.setDestination(_newDestination);
+
+    FeeFlow _newImplementation = new FeeFlow();
+
+    vm.prank(admin);
+    feeFlow.upgradeToAndCall(address(_newImplementation), "");
+
+    assertEq(feeFlow.bidThreshold(), _threshold);
+    assertEq(feeFlow.destination(), _newDestination);
+    assertEq(address(feeFlow.bidToken()), address(bidToken));
+    assertTrue(feeFlow.hasRole(feeFlow.DEFAULT_ADMIN_ROLE(), admin));
+    assertTrue(feeFlow.hasRole(feeFlow.EMERGENCY_ADMIN_ROLE(), emergencyAdmin));
+  }
+
+  function testFuzz_RevertWhen_UpgradeCalledByNonAdmin(address _caller) public {
+    vm.assume(_caller != admin);
+
+    FeeFlow _newImplementation = new FeeFlow();
+
+    vm.prank(_caller);
+    vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
+    feeFlow.upgradeToAndCall(address(_newImplementation), "");
+  }
+
+  function test_RevertWhen_UpgradeCalledByEmergencyAdmin() public {
+    FeeFlow _newImplementation = new FeeFlow();
+
+    vm.prank(emergencyAdmin);
+    vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
+    feeFlow.upgradeToAndCall(address(_newImplementation), "");
   }
 }

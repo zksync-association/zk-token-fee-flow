@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {AccessControl} from "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
+import {
+  AccessControlUpgradeable
+} from "lib/openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgradeable.sol";
+import {
+  UUPSUpgradeable
+} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -13,28 +18,12 @@ import {SafeERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/utils/
 /// destination address.
 /// @dev In ZKsync's deployment, the bid token is ZK and the destination is a Splitter contract.
 /// @custom:security-contact security@matterlabs.dev
-contract FeeFlow is AccessControl {
+contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   using SafeERC20 for IERC20;
 
   /// @notice Role identifier for emergency admin who can pause the contract without governance
   /// delay.
   bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256("EMERGENCY_ADMIN_ROLE");
-
-  /// @notice The token used for bidding in the fee auction.
-  IERC20 public immutable BID_TOKEN;
-
-  /// @notice The amount of bid tokens required to claim accumulated fee assets.
-  uint256 public bidThreshold;
-
-  /// @notice The minimum threshold that can be set for bid token claims.
-  uint256 public immutable MIN_BID_THRESHOLD;
-
-  /// @notice The destination address where bid tokens are forwarded after claims.
-  /// @dev In ZKsync's deployment, this is a Splitter contract.
-  address public destination;
-
-  /// @notice Whether claiming is currently paused.
-  bool public claimPaused;
 
   /// @notice Emitted when the bid threshold is updated.
   event BidThresholdSet(uint256 oldThreshold, uint256 newThreshold);
@@ -68,42 +57,104 @@ contract FeeFlow is AccessControl {
 
   /// @notice Represents a fee token claim request with slippage protection.
   /// @param token The fee token to claim.
-  /// @param minAmount The minimum expected balance (reverts if balance is lower).
+  /// @param minAmountRequested The minimum expected balance (reverts if balance is lower).
   struct ClaimRequest {
     IERC20 token;
     uint256 minAmountRequested;
   }
 
-  /// @param _admin The address that receives the DEFAULT_ADMIN_ROLE (governance).
-  /// @param _emergencyAdmin The address that receives the EMERGENCY_ADMIN_ROLE (emergency board).
+  /// @custom:storage-location erc7201:storage.FeeFlow
+  struct FeeFlowStorage {
+    IERC20 _bidToken;
+    uint256 _bidThreshold;
+    uint256 _minBidThreshold;
+    address _destination;
+    bool _claimPaused;
+  }
+
+  // keccak256(abi.encode(uint256(keccak256("storage.FeeFlow")) - 1)) & ~bytes32(uint256(0xff))
+  bytes32 public constant FEEFLOW_STORAGE_LOCATION =
+    0x00715c6cf755e7a595b437f0ca7683c1e81859c9ea75d4466f02abdb80ef8900;
+
+  function _getFeeFlowStorage() private pure returns (FeeFlowStorage storage $) {
+    assembly {
+      $.slot := FEEFLOW_STORAGE_LOCATION
+    }
+  }
+
+  /// @custom:oz-upgrades-unsafe-allow constructor
+  constructor() {
+    _disableInitializers();
+  }
+
+  /// @notice Initializes the FeeFlow contract.
+  /// @param _admin The address that can update settings and authorize upgrades.
+  /// @param _emergencyAdmin The address that can update settings in emergencies.
   /// @param _bidToken The token contract used for auction payments.
   /// @param _minBidThreshold The minimum threshold that can be set for bid token claims.
   /// @param _bidThreshold The initial bid threshold for claims.
-  /// @param _destination The initial destination address where bid tokens are forwarded.
-  constructor(
+  /// @param _destination The destination address where bid tokens are forwarded.
+  function initialize(
     address _admin,
     address _emergencyAdmin,
     IERC20 _bidToken,
     uint256 _minBidThreshold,
     uint256 _bidThreshold,
     address _destination
-  ) {
+  ) public initializer {
     if (_admin == address(0)) revert FeeFlow_InvalidAddress();
     if (_emergencyAdmin == address(0)) revert FeeFlow_InvalidAddress();
+    if (_destination == address(0)) revert FeeFlow_InvalidAddress();
+    if (_bidThreshold < _minBidThreshold) revert FeeFlow_ThresholdBelowMin();
 
-    BID_TOKEN = _bidToken;
-    MIN_BID_THRESHOLD = _minBidThreshold;
-    _setBidThreshold(_bidThreshold);
-    _setDestination(_destination);
+    __AccessControl_init();
 
     _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     _grantRole(EMERGENCY_ADMIN_ROLE, _emergencyAdmin);
+
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    $._bidToken = _bidToken;
+    $._minBidThreshold = _minBidThreshold;
+    _setBidThreshold(_bidThreshold);
+    _setDestination(_destination);
+  }
+
+  /// @notice Returns the token used for bidding in the fee auction.
+  function bidToken() external view returns (IERC20) {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    return $._bidToken;
+  }
+
+  /// @notice Returns the amount of bid tokens required to claim accumulated fee assets.
+  function bidThreshold() external view returns (uint256) {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    return $._bidThreshold;
+  }
+
+  /// @notice Returns the minimum threshold that can be set for bid token claims.
+  function minBidThreshold() external view returns (uint256) {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    return $._minBidThreshold;
+  }
+
+  /// @notice Returns the destination address where bid tokens are forwarded after claims.
+  function destination() external view returns (address) {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    return $._destination;
+  }
+
+  /// @notice Returns whether claiming is currently paused.
+  function claimPaused() external view returns (bool) {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    return $._claimPaused;
   }
 
   /// @notice Sets the bid threshold required to claim fee assets.
   /// @param _newThreshold The new threshold amount.
   function setBidThreshold(uint256 _newThreshold) external {
     _revertIfNotAdmin();
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    if (_newThreshold < $._minBidThreshold) revert FeeFlow_ThresholdBelowMin();
     _setBidThreshold(_newThreshold);
   }
 
@@ -111,6 +162,7 @@ contract FeeFlow is AccessControl {
   /// @param _newDestination The new destination address.
   function setDestination(address _newDestination) external {
     _revertIfNotAdmin();
+    if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
     _setDestination(_newDestination);
   }
 
@@ -118,7 +170,8 @@ contract FeeFlow is AccessControl {
   /// @param _paused Whether claiming should be paused.
   function setClaimPaused(bool _paused) external {
     _revertIfNotAdmin();
-    claimPaused = _paused;
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    $._claimPaused = _paused;
     emit ClaimPausedSet(_paused);
   }
 
@@ -126,14 +179,15 @@ contract FeeFlow is AccessControl {
   /// @dev The bid token cannot be claimed as a fee token.
   /// @param _claimRequests Array of claim requests specifying tokens and minimum amounts.
   function claim(ClaimRequest[] calldata _claimRequests) external {
-    if (claimPaused) revert FeeFlow_ClaimPaused();
-    uint256 _bidAmount = bidThreshold;
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    if ($._claimPaused) revert FeeFlow_ClaimPaused();
+    uint256 _bidAmount = $._bidThreshold;
 
-    BID_TOKEN.safeTransferFrom(msg.sender, destination, _bidAmount);
+    $._bidToken.safeTransferFrom(msg.sender, $._destination, _bidAmount);
 
     for (uint256 _i = 0; _i < _claimRequests.length; _i++) {
       IERC20 _token = _claimRequests[_i].token;
-      if (_token == BID_TOKEN) revert FeeFlow_InvalidFeeToken();
+      if (_token == $._bidToken) revert FeeFlow_InvalidFeeToken();
       uint256 _balance = _token.balanceOf(address(this));
       if (_balance == 0 || _balance < _claimRequests[_i].minAmountRequested) {
         revert FeeFlow_InsufficientBalance();
@@ -144,26 +198,35 @@ contract FeeFlow is AccessControl {
     emit Claimed(msg.sender, _claimRequests, _bidAmount);
   }
 
-  /// @dev Reverts if the caller does not have `DEFAULT_ADMIN_ROLE` or `EMERGENCY_ADMIN_ROLE`.
+  /// @dev Authorizes an upgrade to a new implementation.
+  /// @dev Only the admin can authorize upgrades.
+  function _authorizeUpgrade(address) internal view override {
+    _revertIfNotDefaultAdmin();
+  }
+
+  /// @dev Reverts if the caller is not the admin or emergency admin.
   function _revertIfNotAdmin() internal view {
     if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender) && !hasRole(EMERGENCY_ADMIN_ROLE, msg.sender)) {
       revert FeeFlow_Unauthorized();
     }
   }
 
-  /// @dev Internal helper to set bid threshold with validation and event emission.
-  /// @param _newThreshold The new threshold amount.
-  function _setBidThreshold(uint256 _newThreshold) internal {
-    if (_newThreshold < MIN_BID_THRESHOLD) revert FeeFlow_ThresholdBelowMin();
-    emit BidThresholdSet(bidThreshold, _newThreshold);
-    bidThreshold = _newThreshold;
+  /// @dev Reverts if the caller is not the admin.
+  function _revertIfNotDefaultAdmin() internal view {
+    if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) revert FeeFlow_Unauthorized();
   }
 
-  /// @dev Internal helper to set destination with validation and event emission.
-  /// @param _newDestination The new destination address.
+  /// @dev Internal helper to set bid threshold and emit event.
+  function _setBidThreshold(uint256 _newThreshold) internal {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    emit BidThresholdSet($._bidThreshold, _newThreshold);
+    $._bidThreshold = _newThreshold;
+  }
+
+  /// @dev Internal helper to set destination and emit event.
   function _setDestination(address _newDestination) internal {
-    if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
-    emit DestinationSet(destination, _newDestination);
-    destination = _newDestination;
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    emit DestinationSet($._destination, _newDestination);
+    $._destination = _newDestination;
   }
 }
