@@ -760,3 +760,68 @@ contract Upgrade is FeeFlowTest {
     feeFlow.upgradeToAndCall(address(_newImplementation), "");
   }
 }
+
+contract Recover is FeeFlowTest {
+  function testFuzz_RecoversTokens_WhenCalledByAdmin(address _to, uint256 _amount) public {
+    vm.assume(_to != address(0) && _to != address(feeFlow));
+
+    ERC20Mock _token = new ERC20Mock();
+    _token.mint(address(feeFlow), _amount);
+
+    vm.prank(admin);
+    feeFlow.recover(IERC20(address(_token)), _to, _amount);
+
+    assertEq(_token.balanceOf(_to), _amount);
+    assertEq(_token.balanceOf(address(feeFlow)), 0);
+  }
+
+  function testFuzz_EmitsEvent_WhenTokensRecovered(address _to, uint256 _amount) public {
+    vm.assume(_to != address(0));
+
+    ERC20Mock _token = new ERC20Mock();
+    _token.mint(address(feeFlow), _amount);
+
+    vm.expectEmit(address(feeFlow));
+    emit FeeFlow.Recovered(IERC20(address(_token)), _to, _amount);
+
+    vm.prank(admin);
+    feeFlow.recover(IERC20(address(_token)), _to, _amount);
+  }
+
+  function testFuzz_RevertWhen_CallerIsNotAdmin(address _caller, address _to, uint256 _amount)
+    public
+  {
+    vm.assume(_caller != admin);
+
+    ERC20Mock _token = new ERC20Mock();
+    _token.mint(address(feeFlow), _amount);
+
+    vm.prank(_caller);
+    vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
+    feeFlow.recover(IERC20(address(_token)), _to, _amount);
+  }
+
+  function test_RevertWhen_CallerIsEmergencyAdmin() public {
+    ERC20Mock _token = new ERC20Mock();
+    _token.mint(address(feeFlow), 1000);
+
+    vm.prank(emergencyAdmin);
+    vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
+    feeFlow.recover(IERC20(address(_token)), destination, 1000);
+  }
+
+  function testFuzz_RevertWhen_InsufficientBalance(address _to, uint256 _balance, uint256 _amount)
+    public
+  {
+    vm.assume(_to != address(0));
+    _balance = bound(_balance, 0, type(uint128).max);
+    _amount = bound(_amount, _balance + 1, type(uint256).max);
+
+    ERC20Mock _token = new ERC20Mock();
+    _token.mint(address(feeFlow), _balance);
+
+    vm.prank(admin);
+    vm.expectRevert();
+    feeFlow.recover(IERC20(address(_token)), _to, _amount);
+  }
+}

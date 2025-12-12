@@ -37,6 +37,9 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @notice Emitted when claim pause state is changed.
   event ClaimPausedSet(bool paused);
 
+  /// @notice Emitted when tokens are recovered by admin.
+  event Recovered(IERC20 indexed token, address indexed to, uint256 amount);
+
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error FeeFlow_InvalidAddress();
 
@@ -196,6 +199,17 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     }
 
     emit Claimed(msg.sender, _claimRequests, _bidAmount);
+  }
+
+  /// @notice Recovers tokens from the contract to an arbitrary address.
+  /// @dev Only callable by the default admin.
+  /// @param _token The token to recover.
+  /// @param _to The address to send the tokens to.
+  /// @param _amount The amount of tokens to recover.
+  function recover(IERC20 _token, address _to, uint256 _amount) external {
+    _revertIfNotDefaultAdmin();
+    _token.safeTransfer(_to, _amount);
+    emit Recovered(_token, _to, _amount);
   }
 
   /// @dev Authorizes an upgrade to a new implementation.
