@@ -40,6 +40,9 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @notice Emitted when tokens are recovered by admin.
   event Recovered(IERC20 indexed token, address indexed to, uint256 amount);
 
+  /// @notice Emitted when a token's claimable status is changed.
+  event ClaimableTokenSet(IERC20 indexed token, bool claimable);
+
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error FeeFlow_InvalidAddress();
 
@@ -58,6 +61,9 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @notice Thrown when attempting to set bid threshold below minimum.
   error FeeFlow_ThresholdBelowMin();
 
+  /// @notice Thrown when attempting to claim a token that is not on the whitelist.
+  error FeeFlow_TokenNotClaimable();
+
   /// @notice Represents a fee token claim request with slippage protection.
   /// @param token The fee token to claim.
   /// @param minAmountRequested The minimum expected balance (reverts if balance is lower).
@@ -73,6 +79,7 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     uint256 _minBidThreshold;
     address _destination;
     bool _claimPaused;
+    mapping(IERC20 token => bool claimable) _claimableTokens;
   }
 
   // keccak256(abi.encode(uint256(keccak256("storage.FeeFlow")) - 1)) & ~bytes32(uint256(0xff))
@@ -97,13 +104,15 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @param _minBidThreshold The minimum threshold that can be set for bid token claims.
   /// @param _bidThreshold The initial bid threshold for claims.
   /// @param _destination The destination address where bid tokens are forwarded.
+  /// @param _claimableTokens The initial list of tokens that can be claimed.
   function initialize(
     address _admin,
     address _emergencyAdmin,
     IERC20 _bidToken,
     uint256 _minBidThreshold,
     uint256 _bidThreshold,
-    address _destination
+    address _destination,
+    IERC20[] calldata _claimableTokens
   ) public initializer {
     if (_admin == address(0)) revert FeeFlow_InvalidAddress();
     if (_emergencyAdmin == address(0)) revert FeeFlow_InvalidAddress();
@@ -120,6 +129,10 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     $._minBidThreshold = _minBidThreshold;
     _setBidThreshold(_bidThreshold);
     _setDestination(_destination);
+
+    for (uint256 _i = 0; _i < _claimableTokens.length; _i++) {
+      _setClaimableToken(_claimableTokens[_i], true);
+    }
   }
 
   /// @notice Returns the token used for bidding in the fee auction.
@@ -152,6 +165,13 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     return $._claimPaused;
   }
 
+  /// @notice Returns whether a token is claimable.
+  /// @param _token The token to check claimability.
+  function isClaimableToken(IERC20 _token) external view returns (bool) {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    return $._claimableTokens[_token];
+  }
+
   /// @notice Sets the bid threshold required to claim fee assets.
   /// @param _newThreshold The new threshold amount.
   function setBidThreshold(uint256 _newThreshold) external {
@@ -178,6 +198,14 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     emit ClaimPausedSet(_paused);
   }
 
+  /// @notice Sets whether a token is claimable.
+  /// @param _token The token to set claimability.
+  /// @param _claimable Whether the token should be claimable.
+  function setClaimableToken(IERC20 _token, bool _claimable) external {
+    _revertIfNotAdmin();
+    _setClaimableToken(_token, _claimable);
+  }
+
   /// @notice Claims accumulated fee tokens in exchange for bid tokens.
   /// @dev The bid token cannot be claimed as a fee token.
   /// @param _claimRequests Array of claim requests specifying tokens and minimum amounts.
@@ -191,6 +219,7 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     for (uint256 _i = 0; _i < _claimRequests.length; _i++) {
       IERC20 _token = _claimRequests[_i].token;
       if (_token == $._bidToken) revert FeeFlow_InvalidFeeToken();
+      if (!$._claimableTokens[_token]) revert FeeFlow_TokenNotClaimable();
       uint256 _balance = _token.balanceOf(address(this));
       if (_balance == 0 || _balance < _claimRequests[_i].minAmountRequested) {
         revert FeeFlow_InsufficientBalance();
@@ -242,5 +271,14 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     FeeFlowStorage storage $ = _getFeeFlowStorage();
     emit DestinationSet($._destination, _newDestination);
     $._destination = _newDestination;
+  }
+
+  /// @dev Sets whether a token is claimable and emits an event.
+  /// @param _token The token to set claimability.
+  /// @param _claimable Whether the token should be claimable.
+  function _setClaimableToken(IERC20 _token, bool _claimable) internal {
+    FeeFlowStorage storage $ = _getFeeFlowStorage();
+    $._claimableTokens[_token] = _claimable;
+    emit ClaimableTokenSet(_token, _claimable);
   }
 }

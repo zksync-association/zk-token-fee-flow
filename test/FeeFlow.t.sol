@@ -25,14 +25,23 @@ contract FeeFlowTest is Test {
     IERC20 _bidToken,
     uint256 _minBidThreshold,
     uint256 _bidThreshold,
-    address _destination
+    address _destination,
+    IERC20[] memory _claimableTokens
   ) internal returns (FeeFlow) {
     FeeFlow _implementation = new FeeFlow();
     ERC1967Proxy _proxy = new ERC1967Proxy(
       address(_implementation),
       abi.encodeCall(
         FeeFlow.initialize,
-        (_admin, _emergencyAdmin, _bidToken, _minBidThreshold, _bidThreshold, _destination)
+        (
+          _admin,
+          _emergencyAdmin,
+          _bidToken,
+          _minBidThreshold,
+          _bidThreshold,
+          _destination,
+          _claimableTokens
+        )
       )
     );
     return FeeFlow(address(_proxy));
@@ -43,13 +52,15 @@ contract FeeFlowTest is Test {
     emergencyAdmin = makeAddr("emergencyAdmin");
     destination = makeAddr("destination");
     bidToken = new ERC20Mock();
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     feeFlow = _deployFeeFlow(
       admin,
       emergencyAdmin,
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination
+      destination,
+      _claimableTokens
     );
   }
 
@@ -74,6 +85,11 @@ contract FeeFlowTest is Test {
   function _boundFeeAmount(uint256 _feeAmount) internal pure returns (uint256) {
     return bound(_feeAmount, 1, type(uint128).max);
   }
+
+  function _whitelistToken(IERC20 _token) internal {
+    vm.prank(admin);
+    feeFlow.setClaimableToken(_token, true);
+  }
 }
 
 contract Initialize is FeeFlowTest {
@@ -97,8 +113,15 @@ contract Initialize is FeeFlowTest {
     _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     feeFlow = _deployFeeFlow(
-      _admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination
+      _admin,
+      _emergencyAdmin,
+      IERC20(_bidToken),
+      _minBidThreshold,
+      _bidThreshold,
+      _destination,
+      _claimableTokens
     );
 
     assertEq(address(feeFlow.bidToken()), _bidToken);
@@ -107,6 +130,27 @@ contract Initialize is FeeFlowTest {
     assertEq(feeFlow.destination(), _destination);
     assertTrue(feeFlow.hasRole(feeFlow.DEFAULT_ADMIN_ROLE(), _admin));
     assertTrue(feeFlow.hasRole(feeFlow.EMERGENCY_ADMIN_ROLE(), _emergencyAdmin));
+  }
+
+  function testFuzz_Initialize_SetsClaimableTokens(address _token1, address _token2) public {
+    vm.assume(_token1 != _token2);
+
+    IERC20[] memory _claimableTokens = new IERC20[](2);
+    _claimableTokens[0] = IERC20(_token1);
+    _claimableTokens[1] = IERC20(_token2);
+
+    feeFlow = _deployFeeFlow(
+      admin,
+      emergencyAdmin,
+      IERC20(address(bidToken)),
+      minBidThreshold,
+      initialBidThreshold,
+      destination,
+      _claimableTokens
+    );
+
+    assertTrue(feeFlow.isClaimableToken(IERC20(_token1)));
+    assertTrue(feeFlow.isClaimableToken(IERC20(_token2)));
   }
 
   function testFuzz_RevertWhen_AdminIsZeroAddress(
@@ -121,6 +165,7 @@ contract Initialize is FeeFlowTest {
     _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
     new ERC1967Proxy(
@@ -133,7 +178,8 @@ contract Initialize is FeeFlowTest {
           IERC20(_bidToken),
           _minBidThreshold,
           _bidThreshold,
-          _destination
+          _destination,
+          _claimableTokens
         )
       )
     );
@@ -151,13 +197,22 @@ contract Initialize is FeeFlowTest {
     _assumeNonZeroAddress(_destination);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
     new ERC1967Proxy(
       address(_implementation),
       abi.encodeCall(
         FeeFlow.initialize,
-        (_admin, address(0), IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination)
+        (
+          _admin,
+          address(0),
+          IERC20(_bidToken),
+          _minBidThreshold,
+          _bidThreshold,
+          _destination,
+          _claimableTokens
+        )
       )
     );
   }
@@ -174,13 +229,22 @@ contract Initialize is FeeFlowTest {
     _assumeNonZeroAddress(_bidToken);
     _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
 
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
     new ERC1967Proxy(
       address(_implementation),
       abi.encodeCall(
         FeeFlow.initialize,
-        (_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, address(0))
+        (
+          _admin,
+          _emergencyAdmin,
+          IERC20(_bidToken),
+          _minBidThreshold,
+          _bidThreshold,
+          address(0),
+          _claimableTokens
+        )
       )
     );
   }
@@ -200,18 +264,28 @@ contract Initialize is FeeFlowTest {
     _minBidThreshold = bound(_minBidThreshold, 1, type(uint256).max);
     _bidThreshold = bound(_bidThreshold, 0, _minBidThreshold - 1);
 
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     FeeFlow _implementation = new FeeFlow();
     vm.expectRevert(FeeFlow.FeeFlow_ThresholdBelowMin.selector);
     new ERC1967Proxy(
       address(_implementation),
       abi.encodeCall(
         FeeFlow.initialize,
-        (_admin, _emergencyAdmin, IERC20(_bidToken), _minBidThreshold, _bidThreshold, _destination)
+        (
+          _admin,
+          _emergencyAdmin,
+          IERC20(_bidToken),
+          _minBidThreshold,
+          _bidThreshold,
+          _destination,
+          _claimableTokens
+        )
       )
     );
   }
 
   function test_RevertWhen_InitializeCalledTwice() public {
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     vm.expectRevert();
     feeFlow.initialize(
       admin,
@@ -219,11 +293,13 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination
+      destination,
+      _claimableTokens
     );
   }
 
   function test_RevertWhen_ImplementationInitialized() public {
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     FeeFlow _implementation = new FeeFlow();
     vm.expectRevert();
     _implementation.initialize(
@@ -232,7 +308,8 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination
+      destination,
+      _claimableTokens
     );
   }
 
@@ -240,6 +317,7 @@ contract Initialize is FeeFlowTest {
     // Deploy a fresh implementation (not behind a proxy)
     FeeFlow _implementation = new FeeFlow();
 
+    IERC20[] memory _claimableTokens = new IERC20[](0);
     // The constructor calls _disableInitializers(), so any attempt to initialize should revert
     // with InvalidInitialization error from Initializable contract
     vm.expectRevert(Initializable.InvalidInitialization.selector);
@@ -249,7 +327,8 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination
+      destination,
+      _claimableTokens
     );
   }
 }
@@ -416,6 +495,52 @@ contract SetClaimPaused is FeeFlowTest {
   }
 }
 
+contract SetClaimableToken is FeeFlowTest {
+  function testFuzz_SetsClaimableToken_WhenCalledByDefaultAdmin(address _token, bool _claimable)
+    public
+  {
+    vm.prank(admin);
+    feeFlow.setClaimableToken(IERC20(_token), _claimable);
+
+    assertEq(feeFlow.isClaimableToken(IERC20(_token)), _claimable);
+  }
+
+  function testFuzz_SetsClaimableToken_WhenCalledByEmergencyAdmin(address _token, bool _claimable)
+    public
+  {
+    vm.prank(emergencyAdmin);
+    feeFlow.setClaimableToken(IERC20(_token), _claimable);
+
+    assertEq(feeFlow.isClaimableToken(IERC20(_token)), _claimable);
+  }
+
+  function testFuzz_RemovesClaimableToken(address _token) public {
+    vm.prank(admin);
+    feeFlow.setClaimableToken(IERC20(_token), true);
+    assertTrue(feeFlow.isClaimableToken(IERC20(_token)));
+
+    vm.prank(admin);
+    feeFlow.setClaimableToken(IERC20(_token), false);
+    assertFalse(feeFlow.isClaimableToken(IERC20(_token)));
+  }
+
+  function testFuzz_EmitsEvent_WhenClaimableTokenIsSet(address _token, bool _claimable) public {
+    vm.expectEmit(address(feeFlow));
+    emit FeeFlow.ClaimableTokenSet(IERC20(_token), _claimable);
+
+    vm.prank(admin);
+    feeFlow.setClaimableToken(IERC20(_token), _claimable);
+  }
+
+  function testFuzz_RevertWhen_CallerIsNotAdmin(address _caller, address _token) public {
+    _assumeNotAdmin(_caller);
+
+    vm.prank(_caller);
+    vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
+    feeFlow.setClaimableToken(IERC20(_token), true);
+  }
+}
+
 contract Claim is FeeFlowTest {
   function testFuzz_TransfersBidTokenToDestination(address _claimer, uint256 _threshold) public {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
@@ -454,6 +579,8 @@ contract Claim is FeeFlowTest {
     ERC20Mock _feeToken = new ERC20Mock();
     _feeToken.mint(address(feeFlow), _feeAmount);
 
+    _whitelistToken(IERC20(address(_feeToken)));
+
     _mintAndApproveBidToken(_claimer, _threshold);
 
     FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](1);
@@ -487,6 +614,9 @@ contract Claim is FeeFlowTest {
     ERC20Mock _feeToken2 = new ERC20Mock();
     _feeToken1.mint(address(feeFlow), _feeAmount1);
     _feeToken2.mint(address(feeFlow), _feeAmount2);
+
+    _whitelistToken(IERC20(address(_feeToken1)));
+    _whitelistToken(IERC20(address(_feeToken2)));
 
     _mintAndApproveBidToken(_claimer, _threshold);
 
@@ -535,6 +665,8 @@ contract Claim is FeeFlowTest {
     ERC20Mock _feeToken = new ERC20Mock();
     _feeToken.mint(address(feeFlow), _feeAmount);
 
+    _whitelistToken(IERC20(address(_feeToken)));
+
     bidToken.mint(address(feeFlow), _threshold);
     vm.prank(address(feeFlow));
     bidToken.approve(address(feeFlow), _threshold);
@@ -569,6 +701,8 @@ contract Claim is FeeFlowTest {
     ERC20Mock _feeToken = new ERC20Mock();
     _feeToken.mint(address(feeFlow), _feeAmount);
 
+    _whitelistToken(IERC20(address(_feeToken)));
+
     _mintAndApproveBidToken(_claimer, _threshold);
 
     FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](1);
@@ -594,6 +728,8 @@ contract Claim is FeeFlowTest {
 
     ERC20Mock _feeToken = new ERC20Mock();
     _feeToken.mint(address(feeFlow), _feeAmount);
+
+    _whitelistToken(IERC20(address(_feeToken)));
 
     _mintAndApproveBidToken(destination, _threshold);
 
@@ -621,6 +757,8 @@ contract Claim is FeeFlowTest {
     feeFlow.setBidThreshold(_threshold);
 
     ERC20Mock _feeToken = new ERC20Mock();
+
+    _whitelistToken(IERC20(address(_feeToken)));
 
     _mintAndApproveBidToken(_claimer, _threshold);
 
@@ -673,6 +811,8 @@ contract Claim is FeeFlowTest {
     ERC20Mock _feeToken = new ERC20Mock();
     _feeToken.mint(address(feeFlow), _feeAmount);
 
+    _whitelistToken(IERC20(address(_feeToken)));
+
     _mintAndApproveBidToken(_claimer, _threshold);
 
     FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](1);
@@ -706,6 +846,34 @@ contract Claim is FeeFlowTest {
 
     vm.prank(_claimer);
     vm.expectRevert(FeeFlow.FeeFlow_ClaimPaused.selector);
+    feeFlow.claim(_claimRequests);
+  }
+
+  function testFuzz_RevertWhen_TokenNotClaimable(
+    address _claimer,
+    uint256 _threshold,
+    uint256 _feeAmount
+  ) public {
+    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    _threshold = _boundThreshold(_threshold);
+    _feeAmount = _boundFeeAmount(_feeAmount);
+
+    vm.prank(admin);
+    feeFlow.setBidThreshold(_threshold);
+
+    ERC20Mock _feeToken = new ERC20Mock();
+    _feeToken.mint(address(feeFlow), _feeAmount);
+
+    // Note: token is NOT whitelisted
+
+    _mintAndApproveBidToken(_claimer, _threshold);
+
+    FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](1);
+    _claimRequests[0] =
+      FeeFlow.ClaimRequest({token: IERC20(address(_feeToken)), minAmountRequested: _feeAmount});
+
+    vm.prank(_claimer);
+    vm.expectRevert(FeeFlow.FeeFlow_TokenNotClaimable.selector);
     feeFlow.claim(_claimRequests);
   }
 }
