@@ -7,6 +7,7 @@ import {
 import {
   UUPSUpgradeable
 } from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
 
 /// @title Splitter
 /// @author ScopeLift
@@ -30,6 +31,11 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   /// @param distributors The new distributor configuration.
   event DistributorsSet(DistributorConfig[] distributors);
 
+  /// @notice Emitted when the burn percentage is updated.
+  /// @param oldBurnBps The previous burn percentage in basis points.
+  /// @param newBurnBps The new burn percentage in basis points.
+  event BurnPercentageSet(uint256 oldBurnBps, uint256 newBurnBps);
+
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error Splitter_InvalidAddress();
 
@@ -39,8 +45,13 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   /// @notice Thrown when a zero weight is provided.
   error Splitter_InvalidWeight();
 
+  /// @notice Thrown when an invalid burn percentage is provided.
+  error Splitter_InvalidBurnPercentage();
+
   /// @custom:storage-location erc7201:storage.Splitter
   struct SplitterStorage {
+    IERC20Burnable _splitToken;
+    uint256 _burnBps;
     uint256 _totalWeight;
     DistributorConfig[] _distributors;
   }
@@ -63,13 +74,20 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   /// @notice Initializes the Splitter contract.
   /// @param _admin The address that can update settings and authorize upgrades.
   /// @param _emergencyAdmin The address that can update settings in emergencies.
+  /// @param _splitToken The token to be split and burned.
+  /// @param _burnBps The initial burn percentage in basis points (must be 10000 if no
+  /// distributors).
   /// @param _initialDistributors The initial set of distributors with weights.
   function initialize(
     address _admin,
     address _emergencyAdmin,
+    IERC20Burnable _splitToken,
+    uint256 _burnBps,
     DistributorConfig[] calldata _initialDistributors
   ) public initializer {
-    if (_admin == address(0)) revert Splitter_InvalidAddress();
+    if (_admin == address(0)) {
+      revert Splitter_InvalidAddress();
+    }
     if (_emergencyAdmin == address(0)) revert Splitter_InvalidAddress();
 
     __AccessControl_init();
@@ -77,7 +95,29 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
     _grantRole(DEFAULT_ADMIN_ROLE, _admin);
     _grantRole(EMERGENCY_ADMIN_ROLE, _emergencyAdmin);
 
+    SplitterStorage storage $ = _getSplitterStorage();
+    $._splitToken = _splitToken;
+
     _setDistributors(_initialDistributors);
+    _setBurnPercentage(_burnBps);
+  }
+
+  /// @notice Returns the token being split and burned.
+  function splitToken() external view returns (IERC20Burnable) {
+    SplitterStorage storage $ = _getSplitterStorage();
+    return $._splitToken;
+  }
+
+  /// @notice Returns the burn percentage in basis points.
+  function burnPercentage() external view returns (uint256) {
+    SplitterStorage storage $ = _getSplitterStorage();
+    return $._burnBps;
+  }
+
+  /// @notice Returns the distributed percentage in basis points (10000 - burnBps).
+  function distributedPercentage() external view returns (uint256) {
+    SplitterStorage storage $ = _getSplitterStorage();
+    return 10_000 - $._burnBps;
   }
 
   /// @notice Returns the total weight of all distributors.
@@ -92,8 +132,15 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
     return $._distributors;
   }
 
+  /// @notice Sets the burn percentage.
+  /// @param _newBurnBps The new burn percentage in basis points (0-10000).
+  function setBurnPercentage(uint256 _newBurnBps) external {
+    _revertIfNotAdmin();
+    _setBurnPercentage(_newBurnBps);
+  }
+
   /// @notice Replaces the entire distributor configuration.
-  /// @dev Empty array is allowed, which effectively pauses distribution.
+  /// @dev Empty array is allowed, which effectively pauses distribution and forces 100% burn.
   /// Duplicate recipients are allowed and will each receive their allocated share.
   /// @param _newDistributors The new set of distributors with weights.
   function setDistributors(DistributorConfig[] calldata _newDistributors) external {
@@ -119,6 +166,22 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
     if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) revert Splitter_Unauthorized();
   }
 
+  /// @dev Sets the burn percentage with validation and event emission.
+  /// @param _newBurnBps The new burn percentage in basis points (0-10000).
+  function _setBurnPercentage(uint256 _newBurnBps) internal {
+    if (_newBurnBps > 10_000) revert Splitter_InvalidBurnPercentage();
+
+    SplitterStorage storage $ = _getSplitterStorage();
+
+    // If no distributors, burn must be 100%
+    if ($._distributors.length == 0 && _newBurnBps != 10_000) {
+      revert Splitter_InvalidBurnPercentage();
+    }
+
+    emit BurnPercentageSet($._burnBps, _newBurnBps);
+    $._burnBps = _newBurnBps;
+  }
+
   /// @dev Sets the distributor configuration and emits an event.
   /// @param _newDistributors The new set of distributors with weights.
   function _setDistributors(DistributorConfig[] calldata _newDistributors) internal {
@@ -138,6 +201,10 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
     }
 
     $._totalWeight = _newTotalWeight;
+
+    // If clearing distributors, force burn to 100%
+    if (_newDistributors.length == 0 && $._burnBps != 10_000) _setBurnPercentage(10_000);
+
     emit DistributorsSet(_newDistributors);
   }
 }
