@@ -176,8 +176,6 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @param _newThreshold The new threshold amount.
   function setBidThreshold(uint256 _newThreshold) external {
     _revertIfNotAdmin();
-    FeeFlowStorage storage $ = _getFeeFlowStorage();
-    if (_newThreshold < $._minBidThreshold) revert FeeFlow_ThresholdBelowMin();
     _setBidThreshold(_newThreshold);
   }
 
@@ -262,6 +260,7 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @dev Internal helper to set bid threshold and emit event.
   function _setBidThreshold(uint256 _newThreshold) internal {
     FeeFlowStorage storage $ = _getFeeFlowStorage();
+    if (_newThreshold < $._minBidThreshold) revert FeeFlow_ThresholdBelowMin();
     emit BidThresholdSet($._bidThreshold, _newThreshold);
     $._bidThreshold = _newThreshold;
   }
