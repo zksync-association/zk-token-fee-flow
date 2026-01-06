@@ -183,7 +183,6 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
   /// @param _newDestination The new destination address.
   function setDestination(address _newDestination) external {
     _revertIfNotAdmin();
-    if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
     _setDestination(_newDestination);
   }
 
@@ -267,6 +266,7 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
 
   /// @dev Internal helper to set destination and emit event.
   function _setDestination(address _newDestination) internal {
+    if (_newDestination == address(0)) revert FeeFlow_InvalidAddress();
     FeeFlowStorage storage $ = _getFeeFlowStorage();
     emit DestinationSet($._destination, _newDestination);
     $._destination = _newDestination;
