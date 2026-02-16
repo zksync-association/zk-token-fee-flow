@@ -2,9 +2,10 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Splitter} from "src/Splitter.sol";
 import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
-import {ERC1967Proxy} from "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC20BurnableMock} from "test/mocks/ERC20BurnableMock.sol";
 
 contract SplitterTest is Test {
@@ -13,6 +14,7 @@ contract SplitterTest is Test {
   address internal admin;
   address internal emergencyAdmin;
   uint256 internal constant DEFAULT_BURN_BPS = 10_000;
+  uint256 internal constant BPS_DENOMINATOR = 10_000;
 
   function _deploySplitter(address _admin, address _emergencyAdmin) internal returns (Splitter) {
     Splitter.DistributorConfig[] memory _emptyDistributors = new Splitter.DistributorConfig[](0);
@@ -67,6 +69,10 @@ contract SplitterTest is Test {
     vm.assume(_addr != admin && _addr != emergencyAdmin);
   }
 
+  function _assumeNotSplitter(address _addr) internal view {
+    vm.assume(_addr != address(splitter));
+  }
+
   function _boundWeight(uint256 _weight) internal pure returns (uint256) {
     return bound(_weight, 1, type(uint96).max);
   }
@@ -95,11 +101,40 @@ contract SplitterTest is Test {
     return _distributors;
   }
 
+  function _setDistributors(Splitter.DistributorConfig[] memory _distributors) internal {
+    vm.prank(admin);
+    splitter.setDistributors(_distributors);
+  }
+
   function _addDistributor() internal {
     address _recipient = makeAddr("recipient");
     Splitter.DistributorConfig[] memory _distributors = _createDistributors(_recipient, 100);
+    _setDistributors(_distributors);
+  }
+
+  function _addDistributors(address _recipient, uint256 _weight) internal {
+    Splitter.DistributorConfig[] memory _distributors = _createDistributors(_recipient, _weight);
+    _setDistributors(_distributors);
+  }
+
+  function _addTwoDistributors(
+    address _recipient1,
+    uint256 _weight1,
+    address _recipient2,
+    uint256 _weight2
+  ) internal {
+    Splitter.DistributorConfig[] memory _distributors =
+      _createDistributors(_recipient1, _weight1, _recipient2, _weight2);
+    _setDistributors(_distributors);
+  }
+
+  function _setBurnBps(uint256 _burnBps) internal {
     vm.prank(admin);
-    splitter.setDistributors(_distributors);
+    splitter.setBurnPercentage(_burnBps);
+  }
+
+  function _mintToSplitter(uint256 _amount) internal {
+    splitToken.mint(address(splitter), _amount);
   }
 }
 
@@ -698,5 +733,299 @@ contract SetBurnPercentage is SplitterTest {
     splitter.setBurnPercentage(DEFAULT_BURN_BPS);
 
     assertEq(splitter.burnPercentage(), DEFAULT_BURN_BPS);
+  }
+}
+
+contract Split is SplitterTest {
+  function testFuzz_DistributesToSingleDistributor(
+    address _caller,
+    address _recipient,
+    uint256 _weight,
+    uint256 _amount
+  ) public {
+    _assumeNonZeroAddress(_caller);
+    _assumeNonZeroAddress(_recipient);
+    _assumeNotSplitter(_recipient);
+    _weight = _boundWeight(_weight);
+    _amount = bound(_amount, 1, type(uint128).max);
+
+    // Set 0% burn so all goes to distributor
+    _addDistributors(_recipient, _weight);
+    _setBurnBps(0);
+    _mintToSplitter(_amount);
+
+    uint256 _splitterBalanceBefore = splitToken.balanceOf(address(splitter));
+    uint256 _recipientBalanceBefore = splitToken.balanceOf(_recipient);
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+
+    // split() is permissionless.
+    vm.prank(_caller);
+    splitter.split();
+
+    uint256 _recipientBalanceAfter = splitToken.balanceOf(_recipient);
+    uint256 _distributed = _recipientBalanceAfter - _recipientBalanceBefore;
+    uint256 _burned = _totalSupplyBefore - splitToken.totalSupply();
+
+    assertEq(_distributed + _burned, _splitterBalanceBefore);
+    // Rounding dust is always < distributor count; here burned is <= 1 wei.
+    assertLe(_burned, 1);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_DistributesToMultipleDistributors(
+    address _recipient1,
+    address _recipient2,
+    uint256 _weight1,
+    uint256 _weight2,
+    uint256 _amount
+  ) public {
+    _assumeNonZeroAddress(_recipient1);
+    _assumeNonZeroAddress(_recipient2);
+    _assumeNotSplitter(_recipient1);
+    _assumeNotSplitter(_recipient2);
+    vm.assume(_recipient1 != _recipient2);
+    _weight1 = _boundWeight(_weight1);
+    _weight2 = _boundWeight(_weight2);
+    _amount = bound(_amount, 1, type(uint128).max);
+
+    Splitter.DistributorConfig[] memory _distributors =
+      _createDistributors(_recipient1, _weight1, _recipient2, _weight2);
+    vm.prank(admin);
+    splitter.setDistributors(_distributors);
+    _setBurnBps(0);
+
+    _mintToSplitter(_amount);
+
+    uint256 _splitterBalanceBefore = splitToken.balanceOf(address(splitter));
+    uint256 _recipient1BalanceBefore = splitToken.balanceOf(_recipient1);
+    uint256 _recipient2BalanceBefore = splitToken.balanceOf(_recipient2);
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+
+    splitter.split();
+
+    uint256 _recipient1BalanceAfter = splitToken.balanceOf(_recipient1);
+    uint256 _recipient2BalanceAfter = splitToken.balanceOf(_recipient2);
+    uint256 _distributed = (_recipient1BalanceAfter - _recipient1BalanceBefore)
+      + (_recipient2BalanceAfter - _recipient2BalanceBefore);
+    uint256 _burned = _totalSupplyBefore - splitToken.totalSupply();
+
+    assertEq(_distributed + _burned, _splitterBalanceBefore);
+    // Rounding dust is always < distributor count; with 2 distributors, burned is <= 1 wei.
+    assertLe(_burned, 1);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_DistributesAllTokensWhenBurnIsZeroPercent(
+    address _recipient,
+    uint256 _weight,
+    uint256 _amount
+  ) public {
+    _assumeNonZeroAddress(_recipient);
+    _assumeNotSplitter(_recipient);
+    _weight = _boundWeight(_weight);
+    _amount = bound(_amount, 1, type(uint128).max);
+
+    _addDistributors(_recipient, _weight);
+    _setBurnBps(0);
+    _mintToSplitter(_amount);
+
+    uint256 _splitterBalanceBefore = splitToken.balanceOf(address(splitter));
+    uint256 _recipientBalanceBefore = splitToken.balanceOf(_recipient);
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+
+    splitter.split();
+
+    uint256 _recipientBalanceAfter = splitToken.balanceOf(_recipient);
+    uint256 _distributed = _recipientBalanceAfter - _recipientBalanceBefore;
+    uint256 _burned = _totalSupplyBefore - splitToken.totalSupply();
+
+    assertEq(_burned, 0);
+    assertEq(_distributed, _splitterBalanceBefore);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_BurnsDustFromRounding(address _recipient1, address _recipient2, uint256 _amount)
+    public
+  {
+    _assumeNonZeroAddress(_recipient1);
+    _assumeNonZeroAddress(_recipient2);
+    _assumeNotSplitter(_recipient1);
+    _assumeNotSplitter(_recipient2);
+    vm.assume(_recipient1 != _recipient2);
+    // Use an amount that will produce dust with these weights
+    _amount = bound(_amount, 100, type(uint128).max);
+    vm.assume(_amount % 3 != 0);
+
+    // Set up 2 distributors with weights that will cause rounding
+    // weights 1 and 2 -> total 3, amounts not divisible by 3 will have dust
+    _addTwoDistributors(_recipient1, 1, _recipient2, 2);
+    _setBurnBps(0);
+
+    _mintToSplitter(_amount);
+
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+    uint256 _share1 = (_amount * 1) / 3;
+    uint256 _share2 = (_amount * 2) / 3;
+    uint256 _dust = _amount - _share1 - _share2;
+
+    splitter.split();
+
+    assertEq(splitToken.balanceOf(_recipient1), _share1);
+    assertEq(splitToken.balanceOf(_recipient2), _share2);
+    // Dust was burned
+    assertEq(splitToken.totalSupply(), _totalSupplyBefore - _dust);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_BurnsDustFromRounding_WhenBurnBpsSet(
+    address _recipient1,
+    address _recipient2,
+    uint256 _burnBps,
+    uint256 _amount
+  ) public {
+    _assumeNonZeroAddress(_recipient1);
+    _assumeNonZeroAddress(_recipient2);
+    _assumeNotSplitter(_recipient1);
+    _assumeNotSplitter(_recipient2);
+    vm.assume(_recipient1 != _recipient2);
+
+    _burnBps = bound(_burnBps, 1, BPS_DENOMINATOR - 1);
+    _amount = bound(_amount, 100, type(uint128).max);
+
+    _addTwoDistributors(_recipient1, 1, _recipient2, 2);
+    _setBurnBps(_burnBps);
+
+    _mintToSplitter(_amount);
+
+    uint256 _splitterBalanceBefore = splitToken.balanceOf(address(splitter));
+    uint256 _expectedBurn = (_splitterBalanceBefore * _burnBps) / BPS_DENOMINATOR;
+    uint256 _expectedDistribute = _splitterBalanceBefore - _expectedBurn;
+    // Ensure the distributable amount produces dust with weights 1 and 2 (total 3).
+    vm.assume(_expectedDistribute % 3 != 0);
+
+    uint256 _recipient1BalanceBefore = splitToken.balanceOf(_recipient1);
+    uint256 _recipient2BalanceBefore = splitToken.balanceOf(_recipient2);
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+
+    splitter.split();
+
+    uint256 _recipient1BalanceAfter = splitToken.balanceOf(_recipient1);
+    uint256 _recipient2BalanceAfter = splitToken.balanceOf(_recipient2);
+
+    uint256 _distributed = (_recipient1BalanceAfter - _recipient1BalanceBefore)
+      + (_recipient2BalanceAfter - _recipient2BalanceBefore);
+    uint256 _burned = _totalSupplyBefore - splitToken.totalSupply();
+
+    assertEq(_distributed + _burned, _splitterBalanceBefore);
+    assertGt(_burned, _expectedBurn);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_EmitsSplitEvent(
+    address _recipient,
+    uint256 _weight,
+    uint256 _burnBps,
+    uint256 _amount
+  ) public {
+    _assumeNonZeroAddress(_recipient);
+    _assumeNotSplitter(_recipient);
+    _weight = _boundWeight(_weight);
+    _burnBps = bound(_burnBps, 0, 10_000);
+    _amount = bound(_amount, 1, type(uint128).max);
+
+    _addDistributors(_recipient, _weight);
+    _setBurnBps(_burnBps);
+    _mintToSplitter(_amount);
+
+    uint256 _expectedBurn = (_amount * _burnBps) / BPS_DENOMINATOR;
+    uint256 _expectedDistribute = _amount - _expectedBurn;
+
+    vm.expectEmit();
+    emit Splitter.Split(_amount, _expectedBurn, _expectedDistribute);
+
+    splitter.split();
+  }
+
+  function testFuzz_ZeroBalanceIsNoOp(address _recipient, uint256 _weight) public {
+    _assumeNonZeroAddress(_recipient);
+    _assumeNotSplitter(_recipient);
+    _weight = _boundWeight(_weight);
+
+    _addDistributors(_recipient, _weight);
+    _setBurnBps(5000);
+    // Don't mint any tokens - balance is 0
+
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+    vm.recordLogs();
+    splitter.split();
+    Vm.Log[] memory _entries = vm.getRecordedLogs();
+
+    assertEq(splitToken.balanceOf(_recipient), 0);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+    assertEq(splitToken.totalSupply(), _totalSupplyBefore);
+    assertEq(_entries.length, 0);
+  }
+
+  function testFuzz_NoDistributors_EmitsSplitEventAndBurnsAll(uint256 _amount) public {
+    _amount = bound(_amount, 1, type(uint128).max);
+
+    // Default setup has no distributors, 100% burn
+    _mintToSplitter(_amount);
+
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+
+    vm.expectEmit();
+    emit Splitter.Split(_amount, _amount, 0);
+
+    splitter.split();
+
+    // All burned
+    assertEq(splitToken.totalSupply(), _totalSupplyBefore - _amount);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_BurnedIsExpectedBurnPlusAtMostOneWei(
+    address _recipient1,
+    address _recipient2,
+    uint256 _weight1,
+    uint256 _weight2,
+    uint256 _burnBps,
+    uint256 _amount
+  ) public {
+    _assumeNonZeroAddress(_recipient1);
+    _assumeNonZeroAddress(_recipient2);
+    _assumeNotSplitter(_recipient1);
+    _assumeNotSplitter(_recipient2);
+    vm.assume(_recipient1 != _recipient2);
+
+    _weight1 = _boundWeight(_weight1);
+    _weight2 = _boundWeight(_weight2);
+    _burnBps = bound(_burnBps, 0, BPS_DENOMINATOR);
+    _amount = bound(_amount, 1, type(uint128).max);
+
+    _addTwoDistributors(_recipient1, _weight1, _recipient2, _weight2);
+    _setBurnBps(_burnBps);
+    _mintToSplitter(_amount);
+
+    uint256 _splitterBalanceBefore = splitToken.balanceOf(address(splitter));
+    uint256 _recipient1BalanceBefore = splitToken.balanceOf(_recipient1);
+    uint256 _recipient2BalanceBefore = splitToken.balanceOf(_recipient2);
+    uint256 _totalSupplyBefore = splitToken.totalSupply();
+
+    uint256 _expectedBurn = (_splitterBalanceBefore * _burnBps) / BPS_DENOMINATOR;
+
+    splitter.split();
+
+    uint256 _recipient1BalanceAfter = splitToken.balanceOf(_recipient1);
+    uint256 _recipient2BalanceAfter = splitToken.balanceOf(_recipient2);
+    uint256 _distributed = (_recipient1BalanceAfter - _recipient1BalanceBefore)
+      + (_recipient2BalanceAfter - _recipient2BalanceBefore);
+    uint256 _burned = _totalSupplyBefore - splitToken.totalSupply();
+
+    // With 2 distributors, rounding dust is <= 1 wei.
+    assertGe(_burned, _expectedBurn);
+    assertLe(_burned, _expectedBurn + 1);
+    assertEq(_distributed + _burned, _splitterBalanceBefore);
+    assertEq(splitToken.balanceOf(address(splitter)), 0);
   }
 }

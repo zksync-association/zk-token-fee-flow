@@ -3,12 +3,12 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {FeeFlow} from "src/FeeFlow.sol";
-import {ERC1967Proxy} from "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {ERC20Mock} from "lib/openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
+import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {ERC20Mock} from "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
 import {
   Initializable
-} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
+} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
 
 contract FeeFlowTest is Test {
   FeeFlow internal feeFlow;

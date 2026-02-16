@@ -3,11 +3,12 @@ pragma solidity 0.8.30;
 
 import {
   AccessControlUpgradeable
-} from "lib/openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgradeable.sol";
+} from "openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgradeable.sol";
 import {
   UUPSUpgradeable
-} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
+} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
+import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title Splitter
 /// @author ScopeLift
@@ -16,6 +17,8 @@ import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
 /// to configured distributors based on their weights.
 /// @custom:security-contact security@matterlabs.dev
 contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
+  using SafeERC20 for IERC20Burnable;
+
   /// @notice Role identifier for emergency admin who can update settings without governance delay.
   bytes32 public constant EMERGENCY_ADMIN_ROLE = keccak256("EMERGENCY_ADMIN_ROLE");
 
@@ -35,6 +38,12 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   /// @param oldBurnBps The previous burn percentage in basis points.
   /// @param newBurnBps The new burn percentage in basis points.
   event BurnPercentageSet(uint256 oldBurnBps, uint256 newBurnBps);
+
+  /// @notice Emitted when tokens are split between burning and distributors.
+  /// @param amount The total amount of tokens that were split.
+  /// @param burned The amount of tokens that were burned (includes dust from rounding).
+  /// @param distributed The amount of tokens that were distributed to distributors.
+  event Split(uint256 amount, uint256 burned, uint256 distributed);
 
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error Splitter_InvalidAddress();
@@ -130,6 +139,41 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   function distributors() external view returns (DistributorConfig[] memory) {
     SplitterStorage storage $ = _getSplitterStorage();
     return $._distributors;
+  }
+
+  /// @notice Splits the contract's token balance between burning and distributors.
+  /// @dev Tokens must be transferred to this contract before calling.
+  /// If the contract's balance is zero, this function is a no-op and emits no `Split` event.
+  /// Any dust from rounding during distribution is burned along with the burn portion.
+  /// This dust is strictly less than the number of distributors (i.e. <= distributors.length - 1,
+  /// in the token's smallest unit).
+  function split() external {
+    SplitterStorage storage $ = _getSplitterStorage();
+    uint256 _amount = $._splitToken.balanceOf(address(this));
+
+    if (_amount == 0) return;
+
+    // Calculate burn amount
+    uint256 _burnAmount = (_amount * $._burnBps) / 10_000;
+    uint256 _distributeAmount = _amount - _burnAmount;
+
+    // Distribute to each distributor based on weight
+    uint256 _totalDistributed;
+    uint256 _totalWeight = $._totalWeight;
+    for (uint256 _i; _i < $._distributors.length; ++_i) {
+      uint256 _share = (_distributeAmount * $._distributors[_i].weight) / _totalWeight;
+      if (_share > 0) {
+        $._splitToken.safeTransfer($._distributors[_i].recipient, _share);
+        _totalDistributed += _share;
+      }
+    }
+
+    uint256 _dust = _distributeAmount - _totalDistributed;
+    // Burn includes dust from rounding during distribution.
+    uint256 _totalBurned = _burnAmount + _dust;
+    if (_totalBurned > 0) $._splitToken.burn(_totalBurned);
+
+    emit Split(_amount, _totalBurned, _totalDistributed);
   }
 
   /// @notice Sets the burn percentage.
