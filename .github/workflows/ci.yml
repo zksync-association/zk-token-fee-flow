@@ -95,15 +95,16 @@ jobs:
       - name: Install Foundry
         uses: dutterbutter/foundry-zksync-toolchain@v1
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
+      - name: Install scopelint
+        uses: engineerd/configurator@v0.0.8
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-
-      - name: Install scopelint (beta)
-        run: cargo install --git https://github.com/ScopeLift/scopelint.git --branch beta-release
+          name: scopelint
+          repo: ScopeLift/scopelint
+          fromGitHubReleases: true
+          version: latest
+          pathInArchive: scopelint-x86_64-linux/scopelint
+          urlTemplate: https://github.com/ScopeLift/scopelint/releases/download/{{version}}/scopelint-x86_64-linux.tar.xz
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check formatting
         run: |

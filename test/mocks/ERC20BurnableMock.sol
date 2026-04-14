@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 
+/// @dev Mock ERC20 with burn functionality for testing.
 contract ERC20BurnableMock is ERC20 {
   constructor() ERC20("Mock Token", "MOCK") {}
 

@@ -9,13 +9,14 @@ import {ERC20Mock} from "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.
 import {
   Initializable
 } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
+import {MockSplitter} from "test/mocks/MockSplitter.sol";
 
 contract FeeFlowTest is Test {
   FeeFlow internal feeFlow;
   address internal admin;
   address internal emergencyAdmin;
   ERC20Mock internal bidToken;
-  address internal destination;
+  MockSplitter internal destination;
   uint256 internal minBidThreshold = 100;
   uint256 internal initialBidThreshold = 1000;
 
@@ -50,7 +51,7 @@ contract FeeFlowTest is Test {
   function setUp() public virtual {
     admin = makeAddr("admin");
     emergencyAdmin = makeAddr("emergencyAdmin");
-    destination = makeAddr("destination");
+    destination = new MockSplitter();
     bidToken = new ERC20Mock();
     IERC20[] memory _claimableTokens = new IERC20[](0);
     feeFlow = _deployFeeFlow(
@@ -59,7 +60,7 @@ contract FeeFlowTest is Test {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination,
+      address(destination),
       _claimableTokens
     );
   }
@@ -145,7 +146,7 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination,
+      address(destination),
       _claimableTokens
     );
 
@@ -293,7 +294,7 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination,
+      address(destination),
       _claimableTokens
     );
   }
@@ -308,7 +309,7 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination,
+      address(destination),
       _claimableTokens
     );
   }
@@ -327,7 +328,7 @@ contract Initialize is FeeFlowTest {
       IERC20(address(bidToken)),
       minBidThreshold,
       initialBidThreshold,
-      destination,
+      address(destination),
       _claimableTokens
     );
   }
@@ -545,7 +546,7 @@ contract Claim is FeeFlowTest {
   function testFuzz_TransfersBidTokenToDestination(address _claimer, uint256 _threshold) public {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != destination);
+    vm.assume(_claimer != address(0) && _claimer != address(destination));
     _threshold = _boundThreshold(_threshold);
 
     vm.prank(admin);
@@ -557,7 +558,7 @@ contract Claim is FeeFlowTest {
     vm.prank(_claimer);
     feeFlow.claim(_claimRequests);
 
-    assertEq(bidToken.balanceOf(destination), _threshold);
+    assertEq(bidToken.balanceOf(address(destination)), _threshold);
     assertEq(bidToken.balanceOf(_claimer), 0);
   }
 
@@ -569,7 +570,9 @@ contract Claim is FeeFlowTest {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes address(feeFlow): see testFuzz_WhenClaimerIsFeeFlow_FeeTokensRemainInContract
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    vm.assume(
+      _claimer != address(0) && _claimer != address(feeFlow) && _claimer != address(destination)
+    );
     _threshold = _boundThreshold(_threshold);
     _feeAmount = _boundFeeAmount(_feeAmount);
 
@@ -602,7 +605,9 @@ contract Claim is FeeFlowTest {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes address(feeFlow): see testFuzz_WhenClaimerIsFeeFlow_FeeTokensRemainInContract
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    vm.assume(
+      _claimer != address(0) && _claimer != address(feeFlow) && _claimer != address(destination)
+    );
     _threshold = _boundThreshold(_threshold);
     _feeAmount1 = _boundFeeAmount(_feeAmount1);
     _feeAmount2 = _boundFeeAmount(_feeAmount2);
@@ -635,7 +640,7 @@ contract Claim is FeeFlowTest {
   function testFuzz_EmitsClaimedEvent(address _claimer, uint256 _threshold) public {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != destination);
+    vm.assume(_claimer != address(0) && _claimer != address(destination));
     _threshold = _boundThreshold(_threshold);
 
     vm.prank(admin);
@@ -689,7 +694,9 @@ contract Claim is FeeFlowTest {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes address(feeFlow): see testFuzz_WhenClaimerIsFeeFlow_FeeTokensRemainInContract
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    vm.assume(
+      _claimer != address(0) && _claimer != address(feeFlow) && _claimer != address(destination)
+    );
     _threshold = _boundThreshold(_threshold);
     _feeAmount = _boundFeeAmount(_feeAmount);
     // minAmountRequested can be equal to or less than feeAmount (covers both cases)
@@ -731,26 +738,28 @@ contract Claim is FeeFlowTest {
 
     _whitelistToken(IERC20(address(_feeToken)));
 
-    _mintAndApproveBidToken(destination, _threshold);
+    _mintAndApproveBidToken(address(destination), _threshold);
 
     FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](1);
     _claimRequests[0] =
       FeeFlow.ClaimRequest({token: IERC20(address(_feeToken)), minAmountRequested: _feeAmount});
 
-    vm.prank(destination);
+    vm.prank(address(destination));
     feeFlow.claim(_claimRequests);
 
     // Bid tokens transferred from destination to destination (net zero change)
-    assertEq(bidToken.balanceOf(destination), _threshold);
+    assertEq(bidToken.balanceOf(address(destination)), _threshold);
     // Fee tokens transferred to destination (the claimer)
-    assertEq(_feeToken.balanceOf(destination), _feeAmount);
+    assertEq(_feeToken.balanceOf(address(destination)), _feeAmount);
   }
 
   function testFuzz_RevertWhen_FeeTokenBalanceIsZero(address _claimer, uint256 _threshold) public {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes address(feeFlow): see testFuzz_WhenClaimerIsFeeFlow_FeeTokensRemainInContract
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    vm.assume(
+      _claimer != address(0) && _claimer != address(feeFlow) && _claimer != address(destination)
+    );
     _threshold = _boundThreshold(_threshold);
 
     vm.prank(admin);
@@ -774,7 +783,7 @@ contract Claim is FeeFlowTest {
   function testFuzz_RevertWhen_FeeTokenIsBidToken(address _claimer, uint256 _threshold) public {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != destination);
+    vm.assume(_claimer != address(0) && _claimer != address(destination));
     _threshold = _boundThreshold(_threshold);
 
     vm.prank(admin);
@@ -800,7 +809,9 @@ contract Claim is FeeFlowTest {
     // Excludes address(0): see test_RevertWhen_ClaimerIsZeroAddress
     // Excludes address(feeFlow): see testFuzz_WhenClaimerIsFeeFlow_FeeTokensRemainInContract
     // Excludes destination: see testFuzz_WhenClaimerIsDestination_BidTokensStayAtDestination
-    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    vm.assume(
+      _claimer != address(0) && _claimer != address(feeFlow) && _claimer != address(destination)
+    );
     _threshold = _boundThreshold(_threshold);
     _feeAmount = bound(_feeAmount, 0, type(uint128).max);
     _minAmount = bound(_minAmount, _feeAmount + 1, type(uint256).max);
@@ -854,7 +865,9 @@ contract Claim is FeeFlowTest {
     uint256 _threshold,
     uint256 _feeAmount
   ) public {
-    vm.assume(_claimer != address(0) && _claimer != address(feeFlow) && _claimer != destination);
+    vm.assume(
+      _claimer != address(0) && _claimer != address(feeFlow) && _claimer != address(destination)
+    );
     _threshold = _boundThreshold(_threshold);
     _feeAmount = _boundFeeAmount(_feeAmount);
 
@@ -875,6 +888,48 @@ contract Claim is FeeFlowTest {
     vm.prank(_claimer);
     vm.expectRevert(FeeFlow.FeeFlow_TokenNotClaimable.selector);
     feeFlow.claim(_claimRequests);
+  }
+
+  function testFuzz_CallsSplitOnDestination(address _claimer, uint256 _threshold) public {
+    vm.assume(_claimer != address(0) && _claimer != address(destination));
+    _threshold = _boundThreshold(_threshold);
+
+    vm.prank(admin);
+    feeFlow.setBidThreshold(_threshold);
+
+    _mintAndApproveBidToken(_claimer, _threshold);
+
+    assertEq(destination.splitCallCount(), 0);
+
+    FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](0);
+    vm.prank(_claimer);
+    feeFlow.claim(_claimRequests);
+
+    assertEq(destination.splitCallCount(), 1);
+  }
+
+  function testFuzz_CallsSplitOnEachClaim(address _claimer, uint256 _threshold, uint8 _numClaims)
+    public
+  {
+    vm.assume(_claimer != address(0) && _claimer != address(destination));
+    // Bound threshold lower to avoid overflow when minting multiple times
+    _threshold = bound(_threshold, minBidThreshold, type(uint128).max / 10);
+    _numClaims = uint8(bound(_numClaims, 1, 10));
+
+    vm.prank(admin);
+    feeFlow.setBidThreshold(_threshold);
+
+    assertEq(destination.splitCallCount(), 0);
+
+    for (uint256 _i = 0; _i < _numClaims; _i++) {
+      _mintAndApproveBidToken(_claimer, _threshold);
+
+      FeeFlow.ClaimRequest[] memory _claimRequests = new FeeFlow.ClaimRequest[](0);
+      vm.prank(_claimer);
+      feeFlow.claim(_claimRequests);
+    }
+
+    assertEq(destination.splitCallCount(), _numClaims);
   }
 }
 
@@ -975,7 +1030,7 @@ contract Recover is FeeFlowTest {
 
     vm.prank(emergencyAdmin);
     vm.expectRevert(FeeFlow.FeeFlow_Unauthorized.selector);
-    feeFlow.recover(IERC20(address(_token)), destination, 1000);
+    feeFlow.recover(IERC20(address(_token)), address(destination), 1000);
   }
 
   function testFuzz_RevertWhen_InsufficientBalance(address _to, uint256 _balance, uint256 _amount)

@@ -9,6 +9,7 @@ import {
 } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
+import {ISplitter} from "src/interfaces/ISplitter.sol";
 
 /// @title FeeFlow
 /// @author ScopeLift
@@ -212,6 +213,7 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     uint256 _bidAmount = $._bidThreshold;
 
     $._bidToken.safeTransferFrom(msg.sender, $._destination, _bidAmount);
+    ISplitter($._destination).split();
 
     for (uint256 _i = 0; _i < _claimRequests.length; _i++) {
       IERC20 _token = _claimRequests[_i].token;
