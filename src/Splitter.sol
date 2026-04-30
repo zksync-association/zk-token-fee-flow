@@ -106,6 +106,7 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
       revert Splitter_InvalidAddress();
     }
     if (_emergencyAdmin == address(0)) revert Splitter_InvalidAddress();
+    if (address(_splitToken) == address(0)) revert Splitter_InvalidAddress();
 
     __AccessControl_init();
 

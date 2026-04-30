@@ -250,6 +250,38 @@ contract Initialize is FeeFlowTest {
     );
   }
 
+  function testFuzz_RevertWhen_BidTokenIsZeroAddress(
+    address _admin,
+    address _emergencyAdmin,
+    uint256 _minBidThreshold,
+    uint256 _bidThreshold,
+    address _destination
+  ) public {
+    _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_emergencyAdmin);
+    _assumeNonZeroAddress(_destination);
+    _bidThreshold = bound(_bidThreshold, _minBidThreshold, type(uint256).max);
+
+    IERC20[] memory _claimableTokens = new IERC20[](0);
+    FeeFlow _implementation = new FeeFlow();
+    vm.expectRevert(FeeFlow.FeeFlow_InvalidAddress.selector);
+    new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        FeeFlow.initialize,
+        (
+          _admin,
+          _emergencyAdmin,
+          IERC20(address(0)),
+          _minBidThreshold,
+          _bidThreshold,
+          _destination,
+          _claimableTokens
+        )
+      )
+    );
+  }
+
   function testFuzz_RevertWhen_BidThresholdBelowMin(
     address _admin,
     address _emergencyAdmin,

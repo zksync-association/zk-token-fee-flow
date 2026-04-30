@@ -119,6 +119,7 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     if (_emergencyAdmin == address(0)) revert FeeFlow_InvalidAddress();
     if (_destination == address(0)) revert FeeFlow_InvalidAddress();
     if (_bidThreshold < _minBidThreshold) revert FeeFlow_ThresholdBelowMin();
+    if (address(_bidToken) == address(0)) revert FeeFlow_InvalidAddress();
 
     __AccessControl_init();
 

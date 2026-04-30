@@ -231,6 +231,24 @@ contract Initialize is SplitterTest {
     );
   }
 
+  function testFuzz_RevertWhen_SplitTokenIsZeroAddress(address _admin, address _emergencyAdmin)
+    public
+  {
+    _assumeNonZeroAddress(_admin);
+    _assumeNonZeroAddress(_emergencyAdmin);
+
+    Splitter.DistributorConfig[] memory _emptyDistributors = new Splitter.DistributorConfig[](0);
+    Splitter _implementation = new Splitter();
+    vm.expectRevert(Splitter.Splitter_InvalidAddress.selector);
+    new ERC1967Proxy(
+      address(_implementation),
+      abi.encodeCall(
+        Splitter.initialize,
+        (_admin, _emergencyAdmin, IERC20Burnable(address(0)), DEFAULT_BURN_BPS, _emptyDistributors)
+      )
+    );
+  }
+
   function testFuzz_RevertWhen_InitialDistributorRecipientIsZeroAddress(
     address _admin,
     address _emergencyAdmin,
