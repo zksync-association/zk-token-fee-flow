@@ -985,7 +985,7 @@ contract Upgrade is FeeFlowTest {
 }
 
 contract Recover is FeeFlowTest {
-  function testFuzz_RecoversTokens_WhenCalledByAdmin(address _to, uint256 _amount) public {
+  function testFuzz_RecoversTokensWhenCalledByAdmin(address _to, uint256 _amount) public {
     vm.assume(_to != address(0) && _to != address(feeFlow));
 
     ERC20Mock _token = new ERC20Mock();
@@ -1046,5 +1046,14 @@ contract Recover is FeeFlowTest {
     vm.prank(admin);
     vm.expectRevert();
     feeFlow.recover(IERC20(address(_token)), _to, _amount);
+  }
+
+  function testFuzz_RevertWhen_ToIsZeroAddress(uint256 _amount) public {
+    ERC20Mock _token = new ERC20Mock();
+    _token.mint(address(feeFlow), _amount);
+
+    vm.prank(admin);
+    vm.expectRevert(abi.encodeWithSignature("ERC20InvalidReceiver(address)", address(0)));
+    feeFlow.recover(IERC20(address(_token)), address(0), _amount);
   }
 }

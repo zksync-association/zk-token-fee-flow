@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {Splitter} from "src/Splitter.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
 import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC20BurnableMock} from "test/mocks/ERC20BurnableMock.sol";
@@ -1027,5 +1028,79 @@ contract Split is SplitterTest {
     assertLe(_burned, _expectedBurn + 1);
     assertEq(_distributed + _burned, _splitterBalanceBefore);
     assertEq(splitToken.balanceOf(address(splitter)), 0);
+  }
+}
+
+contract Recover is SplitterTest {
+  function testFuzz_RecoversTokensWhenCalledByAdmin(address _to, uint256 _amount) public {
+    vm.assume(_to != address(0) && _to != address(splitter));
+
+    ERC20BurnableMock _token = new ERC20BurnableMock();
+    _token.mint(address(splitter), _amount);
+
+    vm.prank(admin);
+    splitter.recover(IERC20(address(_token)), _to, _amount);
+
+    assertEq(_token.balanceOf(_to), _amount);
+    assertEq(_token.balanceOf(address(splitter)), 0);
+  }
+
+  function testFuzz_EmitsEvent_WhenTokensRecovered(address _to, uint256 _amount) public {
+    vm.assume(_to != address(0));
+
+    ERC20BurnableMock _token = new ERC20BurnableMock();
+    _token.mint(address(splitter), _amount);
+
+    vm.expectEmit(address(splitter));
+    emit Splitter.Recovered(IERC20(address(_token)), _to, _amount);
+
+    vm.prank(admin);
+    splitter.recover(IERC20(address(_token)), _to, _amount);
+  }
+
+  function testFuzz_RevertWhen_CallerIsNotAdmin(address _caller, address _to, uint256 _amount)
+    public
+  {
+    _assumeNotAdmin(_caller);
+
+    ERC20BurnableMock _token = new ERC20BurnableMock();
+    _token.mint(address(splitter), _amount);
+
+    vm.prank(_caller);
+    vm.expectRevert(Splitter.Splitter_Unauthorized.selector);
+    splitter.recover(IERC20(address(_token)), _to, _amount);
+  }
+
+  function test_RevertWhen_CallerIsEmergencyAdmin() public {
+    ERC20BurnableMock _token = new ERC20BurnableMock();
+    _token.mint(address(splitter), 1000);
+
+    vm.prank(emergencyAdmin);
+    vm.expectRevert(Splitter.Splitter_Unauthorized.selector);
+    splitter.recover(IERC20(address(_token)), makeAddr("recipient"), 1000);
+  }
+
+  function testFuzz_RevertWhen_InsufficientBalance(address _to, uint256 _balance, uint256 _amount)
+    public
+  {
+    vm.assume(_to != address(0));
+    _balance = bound(_balance, 0, type(uint128).max);
+    _amount = bound(_amount, _balance + 1, type(uint256).max);
+
+    ERC20BurnableMock _token = new ERC20BurnableMock();
+    _token.mint(address(splitter), _balance);
+
+    vm.prank(admin);
+    vm.expectRevert();
+    splitter.recover(IERC20(address(_token)), _to, _amount);
+  }
+
+  function testFuzz_RevertWhen_ToIsZeroAddress(uint256 _amount) public {
+    ERC20BurnableMock _token = new ERC20BurnableMock();
+    _token.mint(address(splitter), _amount);
+
+    vm.prank(admin);
+    vm.expectRevert(abi.encodeWithSignature("ERC20InvalidReceiver(address)", address(0)));
+    splitter.recover(IERC20(address(_token)), address(0), _amount);
   }
 }

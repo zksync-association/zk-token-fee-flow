@@ -7,6 +7,7 @@ import {
 import {
   UUPSUpgradeable
 } from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
 import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -17,6 +18,7 @@ import {SafeERC20} from "openzeppelin-contracts/contracts/token/ERC20/utils/Safe
 /// to configured distributors based on their weights.
 /// @custom:security-contact security@matterlabs.dev
 contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
+  using SafeERC20 for IERC20;
   using SafeERC20 for IERC20Burnable;
 
   /// @notice Role identifier for emergency admin who can update settings without governance delay.
@@ -44,6 +46,12 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   /// @param burned The amount of tokens that were burned (includes dust from rounding).
   /// @param distributed The amount of tokens that were distributed to distributors.
   event Split(uint256 amount, uint256 burned, uint256 distributed);
+
+  /// @notice Emitted when tokens are recovered by the admin.
+  /// @param token The token that was recovered.
+  /// @param to The address that received the recovered tokens.
+  /// @param amount The amount of tokens that were recovered.
+  event Recovered(IERC20 indexed token, address indexed to, uint256 amount);
 
   /// @notice Thrown when an invalid address is provided where a valid address is required.
   error Splitter_InvalidAddress();
@@ -190,6 +198,17 @@ contract Splitter is AccessControlUpgradeable, UUPSUpgradeable {
   function setDistributors(DistributorConfig[] calldata _newDistributors) external {
     _revertIfNotAdmin();
     _setDistributors(_newDistributors);
+  }
+
+  /// @notice Recovers tokens from the contract to an arbitrary address.
+  /// @dev Only callable by the default admin.
+  /// @param _token The token to recover.
+  /// @param _to The address to send the tokens to.
+  /// @param _amount The amount of tokens to recover.
+  function recover(IERC20 _token, address _to, uint256 _amount) external {
+    _revertIfNotDefaultAdmin();
+    _token.safeTransfer(_to, _amount);
+    emit Recovered(_token, _to, _amount);
   }
 
   /// @dev Authorizes an upgrade to a new implementation.
