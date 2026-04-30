@@ -7,6 +7,7 @@ import {Splitter} from "src/Splitter.sol";
 import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IERC20Burnable} from "src/interfaces/IERC20Burnable.sol";
 import {ERC1967Proxy} from "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {SafeCast} from "lib/openzeppelin-contracts/contracts/utils/math/SafeCast.sol";
 
 /// @title Deploy
 /// @notice Deploys FeeFlow and Splitter behind ERC1967 proxies.
@@ -161,8 +162,9 @@ contract Deploy is Script {
       new Splitter.DistributorConfig[](_recipients.length);
     for (uint256 _i; _i < _recipients.length; ++_i) {
       if (_weights[_i] == 0) revert Deploy_DistributorWeightZero(_i);
-      _distributors[_i] =
-        Splitter.DistributorConfig({recipient: _recipients[_i], weight: uint96(_weights[_i])});
+      _distributors[_i] = Splitter.DistributorConfig({
+        recipient: _recipients[_i], weight: SafeCast.toUint96(_weights[_i])
+      });
     }
     return _distributors;
   }
