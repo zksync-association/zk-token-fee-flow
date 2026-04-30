@@ -212,13 +212,15 @@ contract FeeFlow is AccessControlUpgradeable, UUPSUpgradeable {
     FeeFlowStorage storage $ = _getFeeFlowStorage();
     if ($._claimPaused) revert FeeFlow_ClaimPaused();
     uint256 _bidAmount = $._bidThreshold;
+    IERC20 _bidToken = $._bidToken;
+    address _destination = $._destination;
 
-    $._bidToken.safeTransferFrom(msg.sender, $._destination, _bidAmount);
-    ISplitter($._destination).split();
+    _bidToken.safeTransferFrom(msg.sender, _destination, _bidAmount);
+    ISplitter(_destination).split();
 
     for (uint256 _i = 0; _i < _claimRequests.length; _i++) {
       IERC20 _token = _claimRequests[_i].token;
-      if (_token == $._bidToken) revert FeeFlow_InvalidFeeToken();
+      if (_token == _bidToken) revert FeeFlow_InvalidFeeToken();
       if (!$._claimableTokens[_token]) revert FeeFlow_TokenNotClaimable();
       uint256 _balance = _token.balanceOf(address(this));
       if (_balance == 0 || _balance < _claimRequests[_i].minAmountRequested) {
