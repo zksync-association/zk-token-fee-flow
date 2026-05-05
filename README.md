@@ -85,7 +85,18 @@ scopelint check    # Check formatting
 
 ## Deployment
 
-The deployment script is located at `script/Deploy.s.sol`. It deploys both Splitter and FeeFlow contracts with UUPS proxies.
+Deployment is split into a shared base script and a chain-specific configuration:
+
+- `script/BaseFeeFlowDeploy.sol`: common Splitter and FeeFlow proxy deployment flow.
+- `script/EraFeeFlowDeploy.sol`: ZKsync Era mainnet configuration.
+
+```bash
+just era-fee-flow-deploy-mainnet
+just era-fee-flow-deploy-testnet
+```
+
+Required environment variables: `DEPLOYER_PRIVATE_KEY`, plus `ZKSYNC_MAINNET_RPC_URL` for mainnet
+or `ZKSYNC_SEPOLIA_RPC_URL` for testnet.
 
 ## Security
 
